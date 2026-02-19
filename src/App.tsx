@@ -4,7 +4,7 @@ import { DarkMode, LightMode } from '@mui/icons-material';
 import { darkTheme, lightTheme } from './theme';
 import { SetupScreen } from './components/SetupScreen';
 import { ChartScreen } from './components/ChartScreen';
-import type { CryptoOption, OptionType, ParsedMarket, PolymarketEvent, PolymarketPosition, BybitPosition } from './types';
+import type { CryptoOption, OptionType, ParsedMarket, PolymarketEvent, BybitOptionChain as BybitChainType } from './types';
 
 type Screen = 'setup' | 'chart';
 
@@ -17,10 +17,9 @@ function App() {
   const [polyMarkets, setPolyMarkets] = useState<ParsedMarket[]>([]);
   const [crypto, setCrypto] = useState<CryptoOption | null>(null);
   const [optionType, setOptionType] = useState<OptionType>('above');
-  const [polyPositions, setPolyPositions] = useState<PolymarketPosition[]>([]);
 
   // Bybit state
-  const [bybitPositions, setBybitPositions] = useState<BybitPosition[]>([]);
+  const [bybitChain, setBybitChain] = useState<BybitChainType | null>(null);
 
   // Spot price (from either source)
   const [spotPrice, setSpotPrice] = useState(0);
@@ -31,10 +30,14 @@ function App() {
       setPolyMarkets(markets);
       setCrypto(detectedCrypto);
       setOptionType(detectedType);
-      setSpotPrice(prev => prev || spot); // prefer existing if already set
+      setSpotPrice(prev => prev || spot);
     },
     []
   );
+
+  const handleBybitChainSelected = useCallback((chain: BybitChainType | null) => {
+    setBybitChain(chain);
+  }, []);
 
   const handleBybitSpotPriceLoaded = useCallback((price: number) => {
     setSpotPrice(prev => prev || price);
@@ -67,11 +70,10 @@ function App() {
 
         {screen === 'setup' && (
           <SetupScreen
-            polyPositions={polyPositions}
-            bybitPositions={bybitPositions}
-            onPolyPositionsChange={setPolyPositions}
-            onBybitPositionsChange={setBybitPositions}
+            polyEvent={polyEvent}
+            bybitChain={bybitChain}
             onPolyEventLoaded={handlePolyEventLoaded}
+            onBybitChainSelected={handleBybitChainSelected}
             onBybitSpotPriceLoaded={handleBybitSpotPriceLoaded}
             onContinue={handleContinue}
           />
@@ -83,8 +85,7 @@ function App() {
             crypto={crypto}
             optionType={optionType}
             spotPrice={spotPrice}
-            polyPositions={polyPositions}
-            bybitPositions={bybitPositions}
+            bybitChain={bybitChain}
             onBack={handleBack}
           />
         )}

@@ -1,29 +1,27 @@
 import { Box, Typography, Paper, Button } from '@mui/material';
 import { ShowChart } from '@mui/icons-material';
-import type { CryptoOption, OptionType, ParsedMarket, PolymarketEvent, PolymarketPosition, BybitPosition } from '../types';
+import type { CryptoOption, OptionType, ParsedMarket, PolymarketEvent, BybitOptionChain as BybitChainType } from '../types';
 import { PolymarketPanel } from './PolymarketPanel';
 import { BybitOptionChain } from './BybitOptionChain';
 
 interface SetupScreenProps {
-  polyPositions: PolymarketPosition[];
-  bybitPositions: BybitPosition[];
-  onPolyPositionsChange: (positions: PolymarketPosition[]) => void;
-  onBybitPositionsChange: (positions: BybitPosition[]) => void;
+  polyEvent: PolymarketEvent | null;
+  bybitChain: BybitChainType | null;
   onPolyEventLoaded: (event: PolymarketEvent, markets: ParsedMarket[], crypto: CryptoOption | null, optionType: OptionType, spotPrice: number) => void;
+  onBybitChainSelected: (chain: BybitChainType | null) => void;
   onBybitSpotPriceLoaded: (price: number) => void;
   onContinue: () => void;
 }
 
 export function SetupScreen({
-  polyPositions,
-  bybitPositions,
-  onPolyPositionsChange,
-  onBybitPositionsChange,
+  polyEvent,
+  bybitChain,
   onPolyEventLoaded,
+  onBybitChainSelected,
   onBybitSpotPriceLoaded,
   onContinue,
 }: SetupScreenProps) {
-  const hasPositions = polyPositions.length > 0 || bybitPositions.length > 0;
+  const canContinue = polyEvent !== null || bybitChain !== null;
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', p: 3, gap: 3, position: 'relative', overflow: 'hidden' }}>
@@ -55,16 +53,13 @@ export function SetupScreen({
 
       {/* Section A: Polymarket */}
       <Paper elevation={0} sx={{ p: 3, border: '1px solid rgba(139, 157, 195, 0.15)', position: 'relative', zIndex: 1 }}>
-        <PolymarketPanel
-          onPositionsChange={onPolyPositionsChange}
-          onEventLoaded={onPolyEventLoaded}
-        />
+        <PolymarketPanel onEventLoaded={onPolyEventLoaded} />
       </Paper>
 
       {/* Section B: Bybit */}
       <Paper elevation={0} sx={{ p: 3, border: '1px solid rgba(139, 157, 195, 0.15)', position: 'relative', zIndex: 1 }}>
         <BybitOptionChain
-          onPositionsChange={onBybitPositionsChange}
+          onChainSelected={onBybitChainSelected}
           onSpotPriceLoaded={onBybitSpotPriceLoaded}
         />
       </Paper>
@@ -74,18 +69,18 @@ export function SetupScreen({
         <Button
           variant="contained"
           size="large"
-          disabled={!hasPositions}
+          disabled={!canContinue}
           onClick={onContinue}
           sx={{
             px: 6, py: 1.5, fontSize: '1.1rem',
-            background: hasPositions ? 'linear-gradient(135deg, #00D1FF 0%, #00A3CC 100%)' : undefined,
+            background: canContinue ? 'linear-gradient(135deg, #00D1FF 0%, #00A3CC 100%)' : undefined,
           }}
         >
           Continue to Chart
         </Button>
-        {!hasPositions && (
+        {!canContinue && (
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            Select at least one position from Polymarket or Bybit
+            Load a Polymarket event or select a Bybit expiry to continue
           </Typography>
         )}
       </Box>

@@ -23,7 +23,7 @@ function setCache<T>(key: string, data: T): void {
   cache.set(key, { data, timestamp: Date.now() });
 }
 
-/** Parse Bybit symbol like "BTC-28FEB25-100000-C" */
+/** Parse Bybit symbol like "BTC-28FEB25-100000-C" or "BTC-27MAR26-86000-P-USDT" */
 export function parseBybitSymbol(symbol: string): {
   base: string;
   expiryStr: string;
@@ -31,65 +31,87 @@ export function parseBybitSymbol(symbol: string): {
   optionsType: 'Call' | 'Put';
 } | null {
   const parts = symbol.split('-');
+  // Strip trailing USDT suffix (5-part format)
+  if (parts.length === 5 && parts[4] === 'USDT') parts.pop();
   if (parts.length !== 4) return null;
+  const strike = parseFloat(parts[2]);
+  if (isNaN(strike)) return null;
   return {
     base: parts[0],
     expiryStr: parts[1],
-    strike: parseFloat(parts[2]),
+    strike,
     optionsType: parts[3] === 'C' ? 'Call' : 'Put',
   };
 }
 
-/** Fetch BTC option instruments from Bybit V5 */
+/** Fetch BTC option instruments from Bybit V5 (with cursor pagination) */
 export async function fetchBybitInstruments(): Promise<BybitInstrument[]> {
   const cacheKey = 'bybit-instruments';
   const cached = getCached<BybitInstrument[]>(cacheKey);
   if (cached) return cached;
 
-  const resp = await axios.get(`${BYBIT_API_BASE}/v5/market/instruments-info`, {
-    params: { category: 'option', baseCoin: 'BTC' },
-  });
+  const instruments: BybitInstrument[] = [];
+  let cursor = '';
 
-  const list = resp.data?.result?.list || [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const instruments: BybitInstrument[] = list.map((item: any) => ({
-    symbol: item.symbol,
-    optionsType: item.optionsType === 'Call' ? 'Call' as const : 'Put' as const,
-    strike: parseFloat(item.strike),
-    expiryTimestamp: parseInt(item.deliveryTime, 10),
-  }));
+  do {
+    const params: Record<string, string> = { category: 'option', baseCoin: 'BTC' };
+    if (cursor) params.cursor = cursor;
+
+    const resp = await axios.get(`${BYBIT_API_BASE}/v5/market/instruments-info`, { params });
+    const list = resp.data?.result?.list || [];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const item of list as any[]) {
+      const parsed = parseBybitSymbol(item.symbol);
+      if (!parsed) continue;
+      instruments.push({
+        symbol: item.symbol,
+        optionsType: parsed.optionsType,
+        strike: parsed.strike,
+        expiryTimestamp: parseInt(item.deliveryTime, 10),
+      });
+    }
+
+    cursor = resp.data?.result?.nextPageCursor || '';
+  } while (cursor);
 
   setCache(cacheKey, instruments);
   return instruments;
 }
 
-/** Fetch BTC option tickers from Bybit V5 */
+/** Fetch BTC option tickers from Bybit V5 (with cursor pagination) */
 export async function fetchBybitTickers(): Promise<Map<string, BybitTicker>> {
   const cacheKey = 'bybit-tickers';
   const cached = getCached<Map<string, BybitTicker>>(cacheKey);
   if (cached) return cached;
 
-  const resp = await axios.get(`${BYBIT_API_BASE}/v5/market/tickers`, {
-    params: { category: 'option', baseCoin: 'BTC' },
-  });
-
-  const list = resp.data?.result?.list || [];
   const tickers = new Map<string, BybitTicker>();
+  let cursor = '';
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  for (const item of list as any[]) {
-    tickers.set(item.symbol, {
-      symbol: item.symbol,
-      bid1Price: parseFloat(item.bid1Price) || 0,
-      ask1Price: parseFloat(item.ask1Price) || 0,
-      markPrice: parseFloat(item.markPrice) || 0,
-      markIv: parseFloat(item.markIv) || 0,
-      delta: parseFloat(item.delta) || 0,
-      gamma: parseFloat(item.gamma) || 0,
-      vega: parseFloat(item.vega) || 0,
-      theta: parseFloat(item.theta) || 0,
-    });
-  }
+  do {
+    const params: Record<string, string> = { category: 'option', baseCoin: 'BTC' };
+    if (cursor) params.cursor = cursor;
+
+    const resp = await axios.get(`${BYBIT_API_BASE}/v5/market/tickers`, { params });
+    const list = resp.data?.result?.list || [];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const item of list as any[]) {
+      tickers.set(item.symbol, {
+        symbol: item.symbol,
+        bid1Price: parseFloat(item.bid1Price) || 0,
+        ask1Price: parseFloat(item.ask1Price) || 0,
+        markPrice: parseFloat(item.markPrice) || 0,
+        markIv: parseFloat(item.markIv) || 0,
+        delta: parseFloat(item.delta) || 0,
+        gamma: parseFloat(item.gamma) || 0,
+        vega: parseFloat(item.vega) || 0,
+        theta: parseFloat(item.theta) || 0,
+      });
+    }
+
+    cursor = resp.data?.result?.nextPageCursor || '';
+  } while (cursor);
 
   setCache(cacheKey, tickers);
   return tickers;
