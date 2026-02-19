@@ -105,8 +105,7 @@ export function ChartScreen({
     setPolySelections(prev => {
       const next = new Map(prev);
       const key = polySelKey(marketId, side);
-      if (qty > 0) next.set(key, qty);
-      else next.delete(key);
+      if (next.has(key)) next.set(key, qty);
       return next;
     });
   }, []);
@@ -119,6 +118,7 @@ export function ChartScreen({
 
     const result: PolymarketPosition[] = [];
     for (const [key, quantity] of polySelections) {
+      if (!quantity || quantity <= 0 || isNaN(quantity)) continue;
       const dashIdx = key.indexOf('-');
       const marketId = key.slice(0, dashIdx);
       const sideStr = key.slice(dashIdx + 1) as Side;
@@ -154,7 +154,7 @@ export function ChartScreen({
         next.delete(symbol);
       } else {
         const existing = next.get(symbol);
-        next.set(symbol, { side: newSide, quantity: existing?.quantity ?? 1 });
+        next.set(symbol, { side: newSide, quantity: existing?.quantity ?? 0.01 });
       }
       return next;
     });
@@ -164,10 +164,8 @@ export function ChartScreen({
     setBybitSelections(prev => {
       const next = new Map(prev);
       const existing = next.get(symbol);
-      if (existing && qty > 0) {
+      if (existing) {
         next.set(symbol, { ...existing, quantity: qty });
-      } else {
-        next.delete(symbol);
       }
       return next;
     });
@@ -191,6 +189,7 @@ export function ChartScreen({
     if (!bybitChain) return [];
     const result: BybitPosition[] = [];
     for (const [symbol, sel] of bybitSelections) {
+      if (!sel.quantity || sel.quantity <= 0 || isNaN(sel.quantity)) continue;
       const ticker = bybitChain.tickers.get(symbol);
       const inst = bybitChain.instruments.find(i => i.symbol === symbol);
       if (!ticker || !inst) continue;
@@ -458,10 +457,10 @@ export function ChartScreen({
                           value={callSel ? callSel.quantity : ''}
                           disabled={!callSel}
                           onChange={e => {
-                            const v = parseInt(e.target.value, 10);
+                            const v = parseFloat(e.target.value);
                             if (row.call) handleBybitQtyChange(row.call, isNaN(v) ? 0 : v);
                           }}
-                          inputProps={{ min: 1, style: { textAlign: 'center', padding: '2px 4px', fontSize: '0.75rem' } }}
+                          inputProps={{ min: 0.01, step: 0.01, style: { textAlign: 'center', padding: '2px 4px', fontSize: '0.75rem' } }}
                           sx={{ '& .MuiOutlinedInput-root': { backgroundColor: 'transparent' } }}
                         />
                       </>
@@ -495,10 +494,10 @@ export function ChartScreen({
                           value={putSel ? putSel.quantity : ''}
                           disabled={!putSel}
                           onChange={e => {
-                            const v = parseInt(e.target.value, 10);
+                            const v = parseFloat(e.target.value);
                             if (row.put) handleBybitQtyChange(row.put, isNaN(v) ? 0 : v);
                           }}
-                          inputProps={{ min: 1, style: { textAlign: 'center', padding: '2px 4px', fontSize: '0.75rem' } }}
+                          inputProps={{ min: 0.01, step: 0.01, style: { textAlign: 'center', padding: '2px 4px', fontSize: '0.75rem' } }}
                           sx={{ '& .MuiOutlinedInput-root': { backgroundColor: 'transparent' } }}
                         />
                       </>
