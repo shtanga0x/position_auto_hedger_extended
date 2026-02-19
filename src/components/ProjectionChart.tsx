@@ -96,6 +96,35 @@ const POLY_EXPIRY = 'Poly Expiry';
 const BYBIT_NOW = 'Bybit Now';
 const BYBIT_EXPIRY = 'Bybit Expiry';
 
+interface LineStyle {
+  color: string;
+  secondColor?: string;
+  dash?: string;
+  width: number;
+  opacity: number;
+}
+
+function TooltipLineSample({ style, pnlColor }: { style: LineStyle; pnlColor?: string }) {
+  const w = 20;
+  const h = style.width + 2;
+  const y = h / 2;
+  if (style.secondColor && pnlColor) {
+    // For combined curves, show the actual pnl color (green or red)
+    return (
+      <svg width={w} height={h} style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 6 }}>
+        <line x1={0} y1={y} x2={w} y2={y}
+          stroke={pnlColor} strokeWidth={style.width} strokeDasharray={style.dash} />
+      </svg>
+    );
+  }
+  return (
+    <svg width={w} height={h} style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 6 }}>
+      <line x1={0} y1={y} x2={w} y2={y}
+        stroke={style.color} strokeWidth={style.width} strokeDasharray={style.dash} strokeOpacity={style.opacity} />
+    </svg>
+  );
+}
+
 function CustomTooltipContent({
   active,
   payload,
@@ -108,6 +137,7 @@ function CustomTooltipContent({
   secondaryColor,
   hasPolyOverlay,
   hasBybitOverlay,
+  lineStyles,
 }: {
   active?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -122,6 +152,7 @@ function CustomTooltipContent({
   secondaryColor: string;
   hasPolyOverlay: boolean;
   hasBybitOverlay: boolean;
+  lineStyles: Map<string, LineStyle>;
 }) {
   if (!active || !payload || payload.length === 0) return null;
 
@@ -139,6 +170,16 @@ function CustomTooltipContent({
       valueMap.set(baseName, entry.value);
     }
   }
+
+  const renderRow = (label: string, pnl: number, textColor: string, style: LineStyle | undefined, pnlColor?: string) => {
+    const pnlSign = pnl >= 0 ? '+' : '';
+    return (
+      <div key={label} style={{ display: 'flex', alignItems: 'center', fontSize: 13, padding: '2px 0' }}>
+        {style && <TooltipLineSample style={style} pnlColor={pnlColor} />}
+        <span style={{ color: textColor }}>{label}: {pnlSign}{pnl.toFixed(2)}</span>
+      </div>
+    );
+  };
 
   return (
     <div style={{
@@ -158,43 +199,26 @@ function CustomTooltipContent({
         const pnl = valueMap.get(label);
         if (pnl == null) return null;
         const color = pnl >= 0 ? GREEN : RED;
-        const pnlSign = pnl >= 0 ? '+' : '';
-        return (
-          <div key={label} style={{ color, fontSize: 13, padding: '2px 0' }}>
-            {label}: {pnlSign}{pnl.toFixed(2)}
-          </div>
-        );
+        return renderRow(label, pnl, color, lineStyles.get(label), color);
       })}
 
       {/* Poly overlay */}
       {hasPolyOverlay && (
         <>
-          {!hiddenLines.has(POLY_NOW) && valueMap.has(POLY_NOW) && (
-            <div style={{ color: POLY_BLUE, fontSize: 13, padding: '2px 0' }}>
-              {POLY_NOW}: {(valueMap.get(POLY_NOW)! >= 0 ? '+' : '')}{valueMap.get(POLY_NOW)!.toFixed(2)}
-            </div>
-          )}
-          {!hiddenLines.has(POLY_EXPIRY) && valueMap.has(POLY_EXPIRY) && (
-            <div style={{ color: POLY_BLUE, fontSize: 13, padding: '2px 0', opacity: 0.7 }}>
-              {POLY_EXPIRY}: {(valueMap.get(POLY_EXPIRY)! >= 0 ? '+' : '')}{valueMap.get(POLY_EXPIRY)!.toFixed(2)}
-            </div>
-          )}
+          {!hiddenLines.has(POLY_NOW) && valueMap.has(POLY_NOW) &&
+            renderRow(POLY_NOW, valueMap.get(POLY_NOW)!, POLY_BLUE, lineStyles.get(POLY_NOW))}
+          {!hiddenLines.has(POLY_EXPIRY) && valueMap.has(POLY_EXPIRY) &&
+            renderRow(POLY_EXPIRY, valueMap.get(POLY_EXPIRY)!, POLY_BLUE, lineStyles.get(POLY_EXPIRY))}
         </>
       )}
 
       {/* Bybit overlay */}
       {hasBybitOverlay && (
         <>
-          {!hiddenLines.has(BYBIT_NOW) && valueMap.has(BYBIT_NOW) && (
-            <div style={{ color: BYBIT_ORANGE, fontSize: 13, padding: '2px 0' }}>
-              {BYBIT_NOW}: {(valueMap.get(BYBIT_NOW)! >= 0 ? '+' : '')}{valueMap.get(BYBIT_NOW)!.toFixed(2)}
-            </div>
-          )}
-          {!hiddenLines.has(BYBIT_EXPIRY) && valueMap.has(BYBIT_EXPIRY) && (
-            <div style={{ color: BYBIT_ORANGE, fontSize: 13, padding: '2px 0', opacity: 0.7 }}>
-              {BYBIT_EXPIRY}: {(valueMap.get(BYBIT_EXPIRY)! >= 0 ? '+' : '')}{valueMap.get(BYBIT_EXPIRY)!.toFixed(2)}
-            </div>
-          )}
+          {!hiddenLines.has(BYBIT_NOW) && valueMap.has(BYBIT_NOW) &&
+            renderRow(BYBIT_NOW, valueMap.get(BYBIT_NOW)!, BYBIT_ORANGE, lineStyles.get(BYBIT_NOW))}
+          {!hiddenLines.has(BYBIT_EXPIRY) && valueMap.has(BYBIT_EXPIRY) &&
+            renderRow(BYBIT_EXPIRY, valueMap.get(BYBIT_EXPIRY)!, BYBIT_ORANGE, lineStyles.get(BYBIT_EXPIRY))}
         </>
       )}
     </div>
@@ -349,6 +373,27 @@ export function ProjectionChart({
     [majorInterval, minorInterval, axisColor, tickColorFaded]
   );
 
+  // Line styles map for tooltip + legend
+  const lineStyles = useMemo(() => {
+    const styles = new Map<string, LineStyle>();
+    for (let i = 0; i < combinedLabels.length; i++) {
+      styles.set(combinedLabels[i], {
+        color: GREEN, secondColor: RED,
+        dash: COMBINED_DASH[i] || undefined,
+        width: COMBINED_WIDTHS[i], opacity: COMBINED_OPACITIES[i],
+      });
+    }
+    if (hasPolyOverlay) {
+      styles.set(POLY_NOW, { color: POLY_BLUE, width: 2, opacity: 0.8 });
+      styles.set(POLY_EXPIRY, { color: POLY_BLUE, dash: '14 6', width: 2, opacity: 0.6 });
+    }
+    if (hasBybitOverlay) {
+      styles.set(BYBIT_NOW, { color: BYBIT_ORANGE, width: 2, opacity: 0.8 });
+      styles.set(BYBIT_EXPIRY, { color: BYBIT_ORANGE, dash: '14 6', width: 2, opacity: 0.6 });
+    }
+    return styles;
+  }, [combinedLabels, hasPolyOverlay, hasBybitOverlay]);
+
   const renderTooltip = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (props: any) => (
@@ -363,9 +408,10 @@ export function ProjectionChart({
         secondaryColor={axisColor}
         hasPolyOverlay={hasPolyOverlay}
         hasBybitOverlay={hasBybitOverlay}
+        lineStyles={lineStyles}
       />
     ),
-    [combinedLabels, cryptoSymbol, hiddenLines, currentCryptoPrice, tooltipBg, tooltipBorder, axisColor, hasPolyOverlay, hasBybitOverlay]
+    [combinedLabels, cryptoSymbol, hiddenLines, currentCryptoPrice, tooltipBg, tooltipBorder, axisColor, hasPolyOverlay, hasBybitOverlay, lineStyles]
   );
 
   if (chartData.length === 0) return null;
