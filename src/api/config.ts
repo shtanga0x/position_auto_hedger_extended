@@ -15,6 +15,7 @@ const WORKER_URL = import.meta.env.VITE_WORKER_URL || '';
 export const API_CONFIG = {
   GAMMA_API_BASE: isDev ? '/api/gamma' : `${WORKER_URL}/api/gamma`,
   CLOB_API_BASE: isDev ? '/api/clob' : `${WORKER_URL}/api/clob`,
+  BYBIT_API_BASE: isDev ? '/api/bybit' : `${WORKER_URL}/api/bybit`,
 };
 
 // Для отладки

@@ -1,4 +1,4 @@
-import type { OptionType, SelectedStrike, ProjectionPoint } from '../types';
+import type { OptionType, SelectedStrike, ProjectionPoint, BybitPosition, PolymarketPosition } from '../types';
 
 export interface SmilePoint {
   moneyness: number; // ln(S_calibration / K)
@@ -293,6 +293,120 @@ export function computeExpiryPnl(
     }
 
     points.push({ cryptoPrice, pnl: projectedValue - totalEntry });
+  }
+
+  return points;
+}
+
+// --- Black-Scholes vanilla option pricing ---
+
+/**
+ * Black-Scholes call price: C = S*N(d1) - K*e^(-rτ)*N(d2)
+ * At tau<=0 returns intrinsic value max(S-K, 0)
+ */
+export function bsCallPrice(S: number, K: number, sigma: number, tau: number, r: number = 0): number {
+  if (tau <= 0) return Math.max(S - K, 0);
+  if (sigma <= 0) return Math.max(S - K * Math.exp(-r * tau), 0);
+
+  const sqrtTau = Math.sqrt(tau);
+  const d1 = (Math.log(S / K) + (r + sigma * sigma / 2) * tau) / (sigma * sqrtTau);
+  const d2 = d1 - sigma * sqrtTau;
+
+  return S * normalCDF(d1) - K * Math.exp(-r * tau) * normalCDF(d2);
+}
+
+/**
+ * Black-Scholes put price: P = K*e^(-rτ)*N(-d2) - S*N(-d1)
+ * At tau<=0 returns intrinsic value max(K-S, 0)
+ */
+export function bsPutPrice(S: number, K: number, sigma: number, tau: number, r: number = 0): number {
+  if (tau <= 0) return Math.max(K - S, 0);
+  if (sigma <= 0) return Math.max(K * Math.exp(-r * tau) - S, 0);
+
+  const sqrtTau = Math.sqrt(tau);
+  const d1 = (Math.log(S / K) + (r + sigma * sigma / 2) * tau) / (sigma * sqrtTau);
+  const d2 = d1 - sigma * sqrtTau;
+
+  return K * Math.exp(-r * tau) * normalCDF(-d2) - S * normalCDF(-d1);
+}
+
+/** Route to call or put pricing */
+export function bsPrice(S: number, K: number, sigma: number, tau: number, optionsType: 'Call' | 'Put', r: number = 0): number {
+  return optionsType === 'Call' ? bsCallPrice(S, K, sigma, tau, r) : bsPutPrice(S, K, sigma, tau, r);
+}
+
+/**
+ * Compute P&L curve for a single Bybit position.
+ * P&L per contract = (currentOptionValue - entryPrice) * sideMultiplier * quantity
+ */
+export function computeBybitPnlCurve(
+  position: BybitPosition,
+  lowerPrice: number,
+  upperPrice: number,
+  tau: number,
+  numPoints: number = 200,
+): ProjectionPoint[] {
+  if (numPoints < 2) return [];
+
+  const step = (upperPrice - lowerPrice) / (numPoints - 1);
+  const sideMultiplier = position.side === 'buy' ? 1 : -1;
+  const points: ProjectionPoint[] = [];
+
+  for (let i = 0; i < numPoints; i++) {
+    const cryptoPrice = lowerPrice + step * i;
+    const currentValue = bsPrice(cryptoPrice, position.strike, position.markIv, tau, position.optionsType);
+    const pnl = (currentValue - position.entryPrice) * sideMultiplier * position.quantity;
+    points.push({ cryptoPrice, pnl });
+  }
+
+  return points;
+}
+
+/**
+ * Compute combined portfolio P&L curve at one time snapshot.
+ * Sums Polymarket P&L (in contract units, scaled by quantity) and Bybit P&L (in USD).
+ */
+export function computeCombinedPnlCurve(
+  polyPositions: PolymarketPosition[],
+  bybitPositions: BybitPosition[],
+  lowerPrice: number,
+  upperPrice: number,
+  polyTau: number,
+  bybitTaus: Map<string, number>,
+  optionType: OptionType,
+  H: number,
+  smile: SmilePoint[] | undefined,
+  numPoints: number = 200,
+): ProjectionPoint[] {
+  if (numPoints < 2) return [];
+  if (polyPositions.length === 0 && bybitPositions.length === 0) return [];
+
+  const step = (upperPrice - lowerPrice) / (numPoints - 1);
+  const points: ProjectionPoint[] = [];
+
+  for (let i = 0; i < numPoints; i++) {
+    const cryptoPrice = lowerPrice + step * i;
+    let totalPnl = 0;
+
+    // Polymarket positions
+    for (const pos of polyPositions) {
+      const iv = smile
+        ? interpolateSmile(smile, Math.log(cryptoPrice / pos.strikePrice))
+        : pos.impliedVol;
+      const yesPrice = priceOptionYes(cryptoPrice, pos.strikePrice, iv, polyTau, optionType, pos.isUpBarrier, H);
+      const projectedValue = pos.side === 'YES' ? yesPrice : (1 - yesPrice);
+      totalPnl += (projectedValue - pos.entryPrice) * pos.quantity;
+    }
+
+    // Bybit positions
+    for (const pos of bybitPositions) {
+      const tau = bybitTaus.get(pos.symbol) ?? 0;
+      const currentValue = bsPrice(cryptoPrice, pos.strike, pos.markIv, tau, pos.optionsType);
+      const sideMultiplier = pos.side === 'buy' ? 1 : -1;
+      totalPnl += (currentValue - pos.entryPrice) * sideMultiplier * pos.quantity;
+    }
+
+    points.push({ cryptoPrice, pnl: totalPnl });
   }
 
   return points;

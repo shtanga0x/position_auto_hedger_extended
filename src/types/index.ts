@@ -66,3 +66,48 @@ export interface SelectedStrike {
   impliedVol: number; // Calibrated IV (same for YES/NO)
   isUpBarrier: boolean; // For hit-type: true if strike > spot (need price to rise)
 }
+
+// --- Bybit types ---
+
+export interface BybitInstrument {
+  symbol: string;           // e.g. "BTC-28FEB25-100000-C"
+  optionsType: 'Call' | 'Put';
+  strike: number;
+  expiryTimestamp: number;  // Unix ms
+}
+
+export interface BybitTicker {
+  symbol: string;
+  bid1Price: number;
+  ask1Price: number;
+  markPrice: number;
+  markIv: number;           // annualized IV from Bybit (0-1 scale, e.g. 0.55 = 55%)
+  delta: number;
+  gamma: number;
+  vega: number;
+  theta: number;
+}
+
+export interface BybitOptionChain {
+  expiryLabel: string;      // e.g. "28 Feb 2025"
+  expiryTimestamp: number;  // Unix ms
+  instruments: BybitInstrument[];
+  tickers: Map<string, BybitTicker>;
+}
+
+export type BybitSide = 'buy' | 'sell';
+
+export interface BybitPosition {
+  symbol: string;
+  optionsType: 'Call' | 'Put';
+  strike: number;
+  expiryTimestamp: number;  // Unix ms
+  side: BybitSide;
+  entryPrice: number;       // premium in USD
+  markIv: number;
+  quantity: number;
+}
+
+export interface PolymarketPosition extends SelectedStrike {
+  quantity: number;
+}
