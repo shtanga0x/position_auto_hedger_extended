@@ -490,7 +490,7 @@ export function ProjectionChart({
           {/* Invisible line for right Y-axis scale */}
           <Line
             yAxisId="right"
-            type="monotone"
+            type="linear"
             dataKey={combinedLabels[0] ? `${combinedLabels[0]}__pos` : POLY_NOW}
             stroke="none"
             strokeWidth={0}
@@ -505,7 +505,7 @@ export function ProjectionChart({
             <Line
               key={`${label}__pos`}
               yAxisId="left"
-              type="monotone"
+              type="linear"
               dataKey={`${label}__pos`}
               name={`${label}__pos`}
               stroke={GREEN}
@@ -521,7 +521,7 @@ export function ProjectionChart({
             <Line
               key={`${label}__neg`}
               yAxisId="left"
-              type="monotone"
+              type="linear"
               dataKey={`${label}__neg`}
               name={`${label}__neg`}
               stroke={RED}
@@ -540,13 +540,13 @@ export function ProjectionChart({
           {hasPolyOverlay && (
             <>
               <Line
-                yAxisId="left" type="monotone" dataKey={POLY_NOW} name={POLY_NOW}
+                yAxisId="left" type="linear" dataKey={POLY_NOW} name={POLY_NOW}
                 stroke={POLY_BLUE} strokeWidth={2} dot={false} activeDot={ACTIVE_DOT}
                 hide={hiddenLines.has(POLY_NOW)} strokeOpacity={hiddenLines.has(POLY_NOW) ? 0.15 : 0.8}
                 legendType="none"
               />
               <Line
-                yAxisId="left" type="monotone" dataKey={POLY_EXPIRY} name={POLY_EXPIRY}
+                yAxisId="left" type="linear" dataKey={POLY_EXPIRY} name={POLY_EXPIRY}
                 stroke={POLY_BLUE} strokeWidth={2} strokeDasharray="14 6" dot={false} activeDot={ACTIVE_DOT}
                 hide={hiddenLines.has(POLY_EXPIRY)} strokeOpacity={hiddenLines.has(POLY_EXPIRY) ? 0.15 : 0.6}
                 legendType="none"
@@ -558,13 +558,13 @@ export function ProjectionChart({
           {hasBybitOverlay && (
             <>
               <Line
-                yAxisId="left" type="monotone" dataKey={BYBIT_NOW} name={BYBIT_NOW}
+                yAxisId="left" type="linear" dataKey={BYBIT_NOW} name={BYBIT_NOW}
                 stroke={BYBIT_ORANGE} strokeWidth={2} dot={false} activeDot={ACTIVE_DOT}
                 hide={hiddenLines.has(BYBIT_NOW)} strokeOpacity={hiddenLines.has(BYBIT_NOW) ? 0.15 : 0.8}
                 legendType="none"
               />
               <Line
-                yAxisId="left" type="monotone" dataKey={BYBIT_EXPIRY} name={BYBIT_EXPIRY}
+                yAxisId="left" type="linear" dataKey={BYBIT_EXPIRY} name={BYBIT_EXPIRY}
                 stroke={BYBIT_ORANGE} strokeWidth={2} strokeDasharray="14 6" dot={false} activeDot={ACTIVE_DOT}
                 hide={hiddenLines.has(BYBIT_EXPIRY)} strokeOpacity={hiddenLines.has(BYBIT_EXPIRY) ? 0.15 : 0.6}
                 legendType="none"
