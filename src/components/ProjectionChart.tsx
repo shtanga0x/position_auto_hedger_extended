@@ -59,6 +59,20 @@ function formatPct(value: number): string {
   return `${sign}${value.toFixed(1)}%`;
 }
 
+/** Linear interpolation of PnL at a given spot price */
+function interpolatePnlAtSpot(curve: ProjectionPoint[], spot: number): number {
+  if (!curve || curve.length === 0) return 0;
+  if (spot <= curve[0].cryptoPrice) return curve[0].pnl;
+  if (spot >= curve[curve.length - 1].cryptoPrice) return curve[curve.length - 1].pnl;
+  for (let i = 0; i < curve.length - 1; i++) {
+    if (spot <= curve[i + 1].cryptoPrice) {
+      const t = (spot - curve[i].cryptoPrice) / (curve[i + 1].cryptoPrice - curve[i].cryptoPrice);
+      return curve[i].pnl + t * (curve[i + 1].pnl - curve[i].pnl);
+    }
+  }
+  return curve[curve.length - 1].pnl;
+}
+
 function CustomXTick(props: {
   x: number;
   y: number;
@@ -234,6 +248,7 @@ export function ProjectionChart({
   bybitExpiryCurve,
   currentCryptoPrice,
   cryptoSymbol,
+  totalEntryCost,
 }: ProjectionChartProps) {
   const muiTheme = useTheme();
   const isDark = muiTheme.palette.mode === 'dark';
@@ -365,6 +380,19 @@ export function ProjectionChart({
     });
   }, []);
 
+  // PnL at current spot for each curve — used to compute legend % labels
+  const spotPnls = useMemo(() => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < combinedCurves.length; i++) {
+      m.set(combinedLabels[i], interpolatePnlAtSpot(combinedCurves[i], currentCryptoPrice));
+    }
+    if (polyNowCurve) m.set(POLY_NOW, interpolatePnlAtSpot(polyNowCurve, currentCryptoPrice));
+    if (polyExpiryCurve) m.set(POLY_EXPIRY, interpolatePnlAtSpot(polyExpiryCurve, currentCryptoPrice));
+    if (bybitNowCurve) m.set(BYBIT_NOW, interpolatePnlAtSpot(bybitNowCurve, currentCryptoPrice));
+    if (bybitExpiryCurve) m.set(BYBIT_EXPIRY, interpolatePnlAtSpot(bybitExpiryCurve, currentCryptoPrice));
+    return m;
+  }, [combinedCurves, combinedLabels, currentCryptoPrice, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve]);
+
   const renderTick = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (props: any) => (
@@ -416,13 +444,39 @@ export function ProjectionChart({
 
   if (chartData.length === 0) return null;
 
+  // Compute legend % suffix: shows P&L at spot relative to the reference curve
+  const absCost = Math.abs(totalEntryCost ?? 0);
+  function legendPctSuffix(label: string, combinedIndex: number): string {
+    if (absCost <= 0) return '';
+    const pnl = spotPnls.get(label);
+    if (pnl == null) return '';
+    let pct: number;
+    if (label === POLY_EXPIRY) {
+      const ref = spotPnls.get(POLY_NOW) ?? 0;
+      pct = ((pnl - ref) / absCost) * 100;
+    } else if (label === BYBIT_EXPIRY) {
+      const ref = spotPnls.get(BYBIT_NOW) ?? 0;
+      pct = ((pnl - ref) / absCost) * 100;
+    } else if (combinedIndex === 0) {
+      // "Now" — show absolute P&L%
+      pct = (pnl / absCost) * 100;
+    } else {
+      // Other combined snapshots — relative to combined[0] (Now)
+      const ref = spotPnls.get(combinedLabels[0]) ?? 0;
+      pct = ((pnl - ref) / absCost) * 100;
+    }
+    const sign = pct >= 0 ? '+' : '';
+    return ` (${sign}${pct.toFixed(1)}%)`;
+  }
+
   // Build legend items
-  const legendItems: Array<{ label: string; color: string; secondColor?: string; dash?: string; width: number }> = [];
+  const legendItems: Array<{ label: string; displayLabel: string; color: string; secondColor?: string; dash?: string; width: number }> = [];
 
   // Combined curves
   for (let i = 0; i < combinedLabels.length; i++) {
     legendItems.push({
       label: combinedLabels[i],
+      displayLabel: combinedLabels[i] + legendPctSuffix(combinedLabels[i], i),
       color: GREEN,
       secondColor: RED,
       dash: COMBINED_DASH[i] || undefined,
@@ -432,14 +486,14 @@ export function ProjectionChart({
 
   // Poly overlay
   if (hasPolyOverlay) {
-    legendItems.push({ label: POLY_NOW, color: POLY_BLUE, width: 2 });
-    legendItems.push({ label: POLY_EXPIRY, color: POLY_BLUE, dash: '14 6', width: 2 });
+    legendItems.push({ label: POLY_NOW, displayLabel: POLY_NOW + legendPctSuffix(POLY_NOW, -1), color: POLY_BLUE, width: 2 });
+    legendItems.push({ label: POLY_EXPIRY, displayLabel: POLY_EXPIRY + legendPctSuffix(POLY_EXPIRY, -1), color: POLY_BLUE, dash: '14 6', width: 2 });
   }
 
   // Bybit overlay
   if (hasBybitOverlay) {
-    legendItems.push({ label: BYBIT_NOW, color: BYBIT_ORANGE, width: 2 });
-    legendItems.push({ label: BYBIT_EXPIRY, color: BYBIT_ORANGE, dash: '14 6', width: 2 });
+    legendItems.push({ label: BYBIT_NOW, displayLabel: BYBIT_NOW + legendPctSuffix(BYBIT_NOW, -1), color: BYBIT_ORANGE, width: 2 });
+    legendItems.push({ label: BYBIT_EXPIRY, displayLabel: BYBIT_EXPIRY + legendPctSuffix(BYBIT_EXPIRY, -1), color: BYBIT_ORANGE, dash: '14 6', width: 2 });
   }
 
   return (
@@ -601,7 +655,7 @@ export function ProjectionChart({
                   stroke={item.color} strokeWidth={item.width} strokeDasharray={item.dash} />
               )}
             </svg>
-            <span style={{ color: legendColor, fontSize: 13 }}>{item.label}</span>
+            <span style={{ color: legendColor, fontSize: 13 }}>{item.displayLabel}</span>
           </div>
         ))}
       </div>

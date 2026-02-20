@@ -61,6 +61,17 @@ function formatTimeToExpiry(seconds: number): string {
   return `${hours}h ${minutes}m`;
 }
 
+/** Format a Unix-ms timestamp as dd.mm.yyyy hh:mm in UTC+1 */
+function formatExpiryUTC1(tsMs: number): string {
+  const d = new Date(tsMs + 3600000); // shift by +1 h then read UTC
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = d.getUTCFullYear();
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const min = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${dd}.${mm}.${yyyy} ${hh}:${min}`;
+}
+
 // --- Poly selection helpers ---
 function polySelKey(marketId: string, side: Side): string {
   return `${marketId}-${side}`;
@@ -86,7 +97,7 @@ export function ChartScreen({
 
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 0]);
   const [sliderBounds, setSliderBounds] = useState<[number, number]>([0, 0]);
-  const [hExponent, setHExponent] = useState(0.5);
+  const [hExponent, setHExponent] = useState(0.65);
 
   // --- Poly position state ---
   const [polySelections, setPolySelections] = useState<Map<string, number>>(new Map());
@@ -309,7 +320,7 @@ export function ChartScreen({
   const hasBothSources = polyMarkets.length > 0 && bybitChain !== null;
 
   return (
-    <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', p: 3, gap: 3 }}>
+    <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', p: 2, gap: 1.5 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <IconButton
@@ -339,12 +350,14 @@ export function ChartScreen({
       </Box>
 
       {/* Strike selection: side-by-side (poly 1/3, bybit 2/3) */}
-      <Box sx={{ display: 'grid', gridTemplateColumns: hasBothSources ? '1fr 2fr' : '1fr', gap: 3 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: hasBothSources ? '1fr 2fr' : '1fr', gap: 1.5, alignItems: 'stretch' }}>
         {/* Polymarket strikes */}
         {polyMarkets.length > 0 && (
-          <Accordion defaultExpanded elevation={0} sx={{ border: '1px solid rgba(139, 157, 195, 0.15)', '&:before': { display: 'none' } }}>
+          <Accordion defaultExpanded elevation={0} sx={{ border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px !important', overflow: 'hidden', '&:before': { display: 'none' } }}>
             <AccordionSummary expandIcon={<ExpandMore />}>
-              <Typography sx={{ fontWeight: 600, color: '#4A90D9' }}>Polymarket Strikes</Typography>
+              <Typography sx={{ fontWeight: 600, color: '#4A90D9' }}>
+                Polymarket Strikes {polyEvent ? `(${formatExpiryUTC1(polyEvent.endDate * 1000)})` : ''}
+              </Typography>
             </AccordionSummary>
             <AccordionDetails>
               <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
@@ -412,10 +425,10 @@ export function ChartScreen({
 
         {/* Bybit strikes */}
         {bybitChain && bybitStrikeRows.length > 0 && (
-          <Accordion defaultExpanded elevation={0} sx={{ border: '1px solid rgba(139, 157, 195, 0.15)', '&:before': { display: 'none' } }}>
+          <Accordion defaultExpanded elevation={0} sx={{ border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px !important', overflow: 'hidden', '&:before': { display: 'none' } }}>
             <AccordionSummary expandIcon={<ExpandMore />}>
               <Typography sx={{ fontWeight: 600, color: '#FF8C00' }}>
-                Bybit Strikes — {bybitChain.expiryLabel}
+                Bybit Strikes ({formatExpiryUTC1(bybitChain.expiryTimestamp)})
               </Typography>
             </AccordionSummary>
             <AccordionDetails>
@@ -541,49 +554,63 @@ export function ChartScreen({
 
       {/* Position summary (above chart) */}
       {(polyPositions.length > 0 || bybitPositions.length > 0) && (
-        <Paper elevation={0} sx={{ p: 3, border: '1px solid rgba(139, 157, 195, 0.15)' }}>
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>Positions</Typography>
-
-          {polyPositions.length > 0 && (
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="body2" sx={{ color: '#4A90D9', fontWeight: 600, mb: 1 }}>Polymarket</Typography>
-              {polyPositions.map((pos, i) => (
-                <Typography key={i} variant="body2" color="text.secondary" sx={{ pl: 2 }}>
-                  {pos.groupItemTitle} — {pos.side} x{pos.quantity} @ {pos.entryPrice.toFixed(4)}
-                </Typography>
-              ))}
+        <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px' }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr auto 2fr', gap: 2, alignItems: 'center' }}>
+            {/* Poly positions — left 1/3 */}
+            <Box sx={{ minWidth: 0 }}>
+              {polyPositions.length > 0 ? (
+                <>
+                  <Typography variant="caption" sx={{ color: '#4A90D9', fontWeight: 600, display: 'block', mb: 0.5 }}>Polymarket</Typography>
+                  {polyPositions.map((pos, i) => (
+                    <Typography key={i} variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem' }}>
+                      {pos.groupItemTitle} — {pos.side} ×{pos.quantity} @ {pos.entryPrice.toFixed(4)}
+                    </Typography>
+                  ))}
+                </>
+              ) : (
+                <Typography variant="caption" color="text.secondary">—</Typography>
+              )}
             </Box>
-          )}
 
-          {bybitPositions.length > 0 && (
-            <Box>
-              <Typography variant="body2" sx={{ color: '#FF8C00', fontWeight: 600, mb: 1 }}>Bybit</Typography>
-              {bybitPositions.map((pos, i) => (
-                <Typography key={i} variant="body2" color="text.secondary" sx={{ pl: 2 }}>
-                  {pos.symbol} — {pos.side} x{pos.quantity} @ ${pos.entryPrice.toFixed(2)} (fee: ${pos.entryFee.toFixed(2)})
-                </Typography>
-              ))}
-            </Box>
-          )}
-
-          <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid rgba(139, 157, 195, 0.15)', display: 'flex', gap: 3, justifyContent: 'center' }}>
-            <Typography variant="body2" color="text.secondary">
-              Total positions: {polyPositions.length + bybitPositions.length}
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#00D1FF', fontWeight: 600 }}>
-              Net entry cost: ${totalEntryCost.toFixed(2)}
-            </Typography>
-            {totalFees > 0 && (
-              <Typography variant="body2" sx={{ color: '#8B9DC3' }}>
-                Fees: ${totalFees.toFixed(2)}
+            {/* Center stats */}
+            <Box sx={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.25, px: 2,
+              borderLeft: '1px solid rgba(139, 157, 195, 0.15)', borderRight: '1px solid rgba(139, 157, 195, 0.15)',
+            }}>
+              <Typography variant="caption" color="text.secondary">
+                Total positions: {polyPositions.length + bybitPositions.length}
               </Typography>
-            )}
+              <Typography variant="body2" sx={{ color: '#00D1FF', fontWeight: 600 }}>
+                Net entry cost: ${totalEntryCost.toFixed(2)}
+              </Typography>
+              {totalFees > 0 && (
+                <Typography variant="caption" sx={{ color: '#8B9DC3' }}>
+                  Fees: ${totalFees.toFixed(2)}
+                </Typography>
+              )}
+            </Box>
+
+            {/* Bybit positions — right 2/3 */}
+            <Box sx={{ minWidth: 0 }}>
+              {bybitPositions.length > 0 ? (
+                <>
+                  <Typography variant="caption" sx={{ color: '#FF8C00', fontWeight: 600, display: 'block', mb: 0.5 }}>Bybit</Typography>
+                  {bybitPositions.map((pos, i) => (
+                    <Typography key={i} variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem' }}>
+                      {pos.symbol} — {pos.side} ×{pos.quantity} @ ${pos.entryPrice.toFixed(2)} (fee: ${pos.entryFee.toFixed(2)})
+                    </Typography>
+                  ))}
+                </>
+              ) : (
+                <Typography variant="caption" color="text.secondary">—</Typography>
+              )}
+            </Box>
           </Box>
         </Paper>
       )}
 
       {/* Chart */}
-      <Paper elevation={0} sx={{ flex: 1, minHeight: 500, p: 3, border: '1px solid rgba(139, 157, 195, 0.15)' }}>
+      <Paper elevation={0} sx={{ flex: 1, minHeight: 500, p: 2, border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px' }}>
         {!hasData ? (
           <Box sx={{ height: '100%', minHeight: 440, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 2, color: 'text.secondary' }}>
             {polyPositions.length === 0 && bybitPositions.length === 0 ? (
@@ -638,7 +665,7 @@ export function ChartScreen({
 
       {/* H Exponent Slider (Polymarket only) */}
       {polyPositions.length > 0 && (
-        <Paper elevation={0} sx={{ p: 3, border: '1px solid rgba(139, 157, 195, 0.15)' }}>
+        <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px' }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
             <Typography variant="body2" color="text.secondary">0.40</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
