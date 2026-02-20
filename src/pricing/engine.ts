@@ -368,8 +368,44 @@ export function computeBybitPnlCurve(
 }
 
 /**
+ * Build an adaptive price grid that concentrates points near strike prices.
+ * Uses uniform base grid + extra points within ±5% of each strike.
+ */
+export function buildAdaptiveGrid(
+  lower: number,
+  upper: number,
+  strikes: number[],
+  numPoints: number = 200,
+): number[] {
+  const range = upper - lower;
+  if (range <= 0 || numPoints < 2) return [];
+
+  // Start with uniform grid
+  const baseStep = range / (numPoints - 1);
+  const priceSet = new Set<number>();
+  for (let i = 0; i < numPoints; i++) {
+    priceSet.add(lower + baseStep * i);
+  }
+
+  // Add extra points near each strike (±5% of range, with 4x density)
+  const zoneRadius = range * 0.05;
+  const fineStep = baseStep / 4;
+  for (const K of strikes) {
+    const zoneStart = Math.max(lower, K - zoneRadius);
+    const zoneEnd = Math.min(upper, K + zoneRadius);
+    for (let p = zoneStart; p <= zoneEnd; p += fineStep) {
+      priceSet.add(p);
+    }
+    priceSet.add(K); // ensure strike itself is included
+  }
+
+  return Array.from(priceSet).sort((a, b) => a - b);
+}
+
+/**
  * Compute combined portfolio P&L curve at one time snapshot.
  * Sums Polymarket P&L (in contract units, scaled by quantity) and Bybit P&L (in USD).
+ * Uses adaptive grid for better resolution near strikes.
  */
 export function computeCombinedPnlCurve(
   polyPositions: PolymarketPosition[],
@@ -382,15 +418,19 @@ export function computeCombinedPnlCurve(
   H: number,
   smile: SmilePoint[] | undefined,
   numPoints: number = 200,
+  prebuiltGrid?: number[],
 ): ProjectionPoint[] {
-  if (numPoints < 2) return [];
   if (polyPositions.length === 0 && bybitPositions.length === 0) return [];
 
-  const step = (upperPrice - lowerPrice) / (numPoints - 1);
+  const grid = prebuiltGrid ?? buildAdaptiveGrid(
+    lowerPrice, upperPrice,
+    [...polyPositions.map(p => p.strikePrice), ...bybitPositions.map(p => p.strike)],
+    numPoints,
+  );
+  if (grid.length === 0) return [];
   const points: ProjectionPoint[] = [];
 
-  for (let i = 0; i < numPoints; i++) {
-    const cryptoPrice = lowerPrice + step * i;
+  for (const cryptoPrice of grid) {
     let totalPnl = 0;
 
     // Polymarket positions

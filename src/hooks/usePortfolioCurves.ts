@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { OptionType, ProjectionPoint, PolymarketPosition, BybitPosition } from '../types';
 import {
   computeCombinedPnlCurve,
+  buildAdaptiveGrid,
   bsPrice,
   priceOptionYes,
   interpolateSmile,
@@ -94,20 +95,16 @@ function computeSnapshots(
 /** Compute P&L curve for only Polymarket positions at a given tau */
 function computePolyOnlyCurve(
   positions: PolymarketPosition[],
-  lower: number,
-  upper: number,
+  grid: number[],
   tau: number,
   optionType: OptionType,
   H: number,
   smile: SmilePoint[] | undefined,
-  numPoints: number,
 ): ProjectionPoint[] {
-  if (positions.length === 0 || numPoints < 2) return [];
-  const step = (upper - lower) / (numPoints - 1);
+  if (positions.length === 0 || grid.length === 0) return [];
   const points: ProjectionPoint[] = [];
 
-  for (let i = 0; i < numPoints; i++) {
-    const cryptoPrice = lower + step * i;
+  for (const cryptoPrice of grid) {
     let pnl = 0;
     for (const pos of positions) {
       const iv = smile
@@ -131,17 +128,13 @@ function computePolyOnlyCurve(
 /** Compute P&L curve for only Bybit positions at given taus (includes fees) */
 function computeBybitOnlyCurve(
   positions: BybitPosition[],
-  lower: number,
-  upper: number,
+  grid: number[],
   taus: Map<string, number>,
-  numPoints: number,
 ): ProjectionPoint[] {
-  if (positions.length === 0 || numPoints < 2) return [];
-  const step = (upper - lower) / (numPoints - 1);
+  if (positions.length === 0 || grid.length === 0) return [];
   const points: ProjectionPoint[] = [];
 
-  for (let i = 0; i < numPoints; i++) {
-    const cryptoPrice = lower + step * i;
+  for (const cryptoPrice of grid) {
     let pnl = 0;
     for (const pos of positions) {
       const tau = taus.get(pos.symbol) ?? 0;
@@ -188,6 +181,13 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     // Compute time snapshots based on actual expiry dates
     const snapshots = computeSnapshots(polyPositions, bybitPositions, nowSec, polyExpiryTs);
 
+    // Build shared adaptive grid with all strikes
+    const allStrikes = [
+      ...polyPositions.map(p => p.strikePrice),
+      ...bybitPositions.map(p => p.strike),
+    ];
+    const grid = buildAdaptiveGrid(lowerPrice, upperPrice, allStrikes, numPoints);
+
     // Compute combined curve at each snapshot
     const combinedCurves: ProjectionPoint[][] = snapshots.map(snap => {
       const polyTau = polyExpiryTs > 0
@@ -201,21 +201,21 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
         polyPositions, bybitPositions,
         lowerPrice, upperPrice,
         polyTau, bybitTaus,
-        optionType, H, smile, numPoints,
+        optionType, H, smile, numPoints, grid,
       );
     });
 
     const combinedLabels = snapshots.map(s => s.label);
 
     // Individual source overlay curves (for when both sources present)
-    // Poly: now and at poly's own expiry
+    // Use shared grid so all curves align by index
     const polyNowCurve = computePolyOnlyCurve(
-      polyPositions, lowerPrice, upperPrice,
-      polyTauNow, optionType, H, smile, numPoints,
+      polyPositions, grid,
+      polyTauNow, optionType, H, smile,
     );
     const polyExpiryCurve = computePolyOnlyCurve(
-      polyPositions, lowerPrice, upperPrice,
-      0, optionType, H, smile, numPoints,
+      polyPositions, grid,
+      0, optionType, H, smile,
     );
 
     // Bybit: now and at bybit's own expiry (tau=0)
@@ -225,8 +225,8 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       bybitTausNow.set(pos.symbol, Math.max(((pos.expiryTimestamp / 1000) - nowSec) / YEAR_SEC, 0));
       bybitTausExpiry.set(pos.symbol, 0);
     }
-    const bybitNowCurve = computeBybitOnlyCurve(bybitPositions, lowerPrice, upperPrice, bybitTausNow, numPoints);
-    const bybitExpiryCurve = computeBybitOnlyCurve(bybitPositions, lowerPrice, upperPrice, bybitTausExpiry, numPoints);
+    const bybitNowCurve = computeBybitOnlyCurve(bybitPositions, grid, bybitTausNow);
+    const bybitExpiryCurve = computeBybitOnlyCurve(bybitPositions, grid, bybitTausExpiry);
 
     // Total entry cost and fees
     let totalEntryCost = 0;
