@@ -5,12 +5,13 @@ This document describes the mathematical models, equations, and design decisions
 ## Table of Contents
 
 - [Normal CDF Approximation](#normal-cdf-approximation)
+- [Black-Scholes Vanilla Options (Bybit)](#black-scholes-vanilla-options-bybit)
 - [European Binary Option ("above")](#european-binary-option-above)
 - [One-Touch Barrier Option ("hit")](#one-touch-barrier-option-hit)
 - [Time-Scaling Exponent H](#time-scaling-exponent-h)
 - [Implied Volatility Calibration](#implied-volatility-calibration)
 - [IV Smile and Sticky-Moneyness](#iv-smile-and-sticky-moneyness)
-- [P&L Curve Computation](#pnl-curve-computation)
+- [Combined Portfolio P&L](#combined-portfolio-pnl)
 - [Expiry Payoff](#expiry-payoff)
 - [Design Decisions](#design-decisions)
 
@@ -20,16 +21,79 @@ This document describes the mathematical models, equations, and design decisions
 
 The cumulative distribution function of the standard normal distribution Φ(x) is approximated using the Abramowitz & Stegun rational approximation (formula 26.2.17):
 
+For x ≥ 0:
 ```
-Φ(x) = 1 - φ(x)(a₁t + a₂t² + a₃t³ + a₄t⁴ + a₅t⁵)
-where t = 1 / (1 + 0.3275911·|x|)
+Φ(x) = 1 − φ(x) · (b₁t + b₂t² + b₃t³ + b₄t⁴ + b₅t⁵)
+where t = 1 / (1 + p·x)
 ```
 
-Coefficients: a₁ = 0.254829592, a₂ = −0.284496736, a₃ = 1.421413741, a₄ = −1.453152027, a₅ = 1.061405429.
+For x < 0:
+```
+Φ(x) = 1 − Φ(−x)
+```
 
-Maximum error: |ε| < 1.5 × 10⁻⁷. For |x| > 8, the function returns 0 or 1 directly.
+Coefficients:
+```
+p  = 0.2316419
+b₁ = 0.319381530
+b₂ = −0.356563782
+b₃ = 1.781477937
+b₄ = −1.821255978
+b₅ = 1.330274429
+```
+
+Maximum error: |ε| < 7.5 × 10⁻⁸. For |x| > 8, the function returns 0 or 1 directly.
+
+> **Note on a historical bug (fixed in v3.0.1):** An earlier version used a different set of coefficients (p = 0.3275911, a₁ = 0.254829592, …) from a less accurate polynomial family. These produced errors of 2–4% in Φ(x) for values near the strike, causing Black-Scholes call/put prices to be off by $700–$1200 and the price slope (delta) to become non-monotone — manifesting as a visible kink/elbow in the P&L curve at the strike price. The fix was to switch to the correct A&S 26.2.17 coefficients above.
 
 **Implementation:** `normalCDF(x)` in `engine.ts`
+
+---
+
+## Black-Scholes Vanilla Options (Bybit)
+
+Bybit positions are standard European vanilla calls and puts priced with the Black-Scholes model (zero risk-free rate, zero dividends).
+
+### Call Price
+
+```
+C = S·Φ(d₁) − K·Φ(d₂)
+
+d₁ = [ln(S/K) + σ²τ/2] / (σ√τ)
+d₂ = d₁ − σ√τ = [ln(S/K) − σ²τ/2] / (σ√τ)
+```
+
+### Put Price
+
+```
+P = K·Φ(−d₂) − S·Φ(−d₁)
+```
+
+(Equivalent by put-call parity: P = C − S + K for r = 0.)
+
+Where:
+- **S** — current spot price
+- **K** — strike price
+- **σ** — implied volatility (annualized, taken from Bybit's `markIv` field)
+- **τ** — time to expiry in years
+- **Φ** — standard normal CDF
+
+### Boundary Conditions
+
+- τ ≤ 0 (expired): `max(S−K, 0)` for call, `max(K−S, 0)` for put
+- σ ≤ 0: same as expired
+
+**Implementation:** `bsCallPrice(S, K, sigma, tau)`, `bsPutPrice(S, K, sigma, tau)`, `bsPrice(S, K, sigma, tau, type)` in `engine.ts`
+
+### Bybit Trading Fee
+
+Bybit charges a taker fee on options trades. The fee per contract is:
+```
+fee = 0.0006 × max(entryPremium, 0.001 × S) × quantity
+```
+(0.06% of premium, minimum 0.1% of notional spot value.)
+
+**Implementation:** `bybitTradingFee(spotPrice, entryPrice, quantity)` in `engine.ts`
 
 ---
 
@@ -39,20 +103,13 @@ A European binary (digital) option that pays $1 if the underlying price S is abo
 
 ### Standard Formula (H = 0.5)
 
-Under the Black-Scholes framework with zero risk-free rate (r = 0) and zero dividend yield:
+Under the Black-Scholes framework with r = 0:
 
 ```
 P(YES) = Φ(d₂)
 
 d₂ = [ln(S/K) − σ²τ/2] / (σ√τ)
 ```
-
-Where:
-- **S** — current spot price of the underlying
-- **K** — strike price
-- **σ** — implied volatility (annualized)
-- **τ** — time to expiry in years (seconds_remaining / 365.25 / 24 / 3600)
-- **Φ** — standard normal CDF
 
 ### Generalized Formula (arbitrary H)
 
@@ -64,7 +121,7 @@ P(YES) = Φ(d₂)
 d₂ = [ln(S/K) − σ²·τ^(2H)/2] / (σ·τ^H)
 ```
 
-When H = 0.5, this reduces to the standard formula since τ^0.5 = √τ and τ^1.0 = τ.
+When H = 0.5 this reduces to the standard formula.
 
 ### Boundary Conditions
 
@@ -77,54 +134,44 @@ When H = 0.5, this reduces to the standard formula since τ^0.5 = √τ and τ^1
 
 ## One-Touch Barrier Option ("hit")
 
-A one-touch barrier option that pays $1 if the underlying price touches the barrier level at any point before expiry. Unlike the "above" type, this depends on the **path** of the price, not just the terminal value.
+A one-touch barrier option that pays $1 if the underlying price touches the barrier level at any point before expiry.
 
 ### Direction Detection
 
-The barrier direction is determined at entry:
-- **UP barrier** (`isUpBarrier = true`): Strike > Spot at entry → price must **rise** to hit
-- **DOWN barrier** (`isUpBarrier = false`): Strike < Spot at entry → price must **drop** to hit
+Determined at entry (when IV is calibrated):
+- **UP barrier** (`isUpBarrier = true`): strike > spot at entry → price must rise to hit
+- **DOWN barrier** (`isUpBarrier = false`): strike < spot at entry → price must drop to hit
 
 ### UP Barrier Formula
 
 When S < barrier (not yet hit):
 
 ```
-P(YES) = Φ(d₁) + (S/H)·Φ(d₂)
+P(YES) = Φ(d₁) + (S/B)·Φ(d₂)
 
-d₁ = [ln(S/H) − σ²·τ^(2H)/2] / (σ·τ^H)
-d₂ = [ln(S/H) + σ²·τ^(2H)/2] / (σ·τ^H)
+d₁ = [ln(S/B) − σ²·τ^(2H)/2] / (σ·τ^H)
+d₂ = [ln(S/B) + σ²·τ^(2H)/2] / (σ·τ^H)
 ```
 
-Where H (in the formula) is the barrier level (not the time exponent — the function parameter is named `barrier` to avoid ambiguity).
+Where B = barrier level.
 
 ### DOWN Barrier Formula
 
 When S > barrier (not yet hit):
 
 ```
-P(YES) = Φ(e₁) + (S/H)·Φ(e₂)
+P(YES) = Φ(e₁) + (S/B)·Φ(e₂)
 
-e₁ = [ln(H/S) + σ²·τ^(2H)/2] / (σ·τ^H)
-e₂ = [ln(H/S) − σ²·τ^(2H)/2] / (σ·τ^H)
+e₁ = [ln(B/S) + σ²·τ^(2H)/2] / (σ·τ^H)
+e₂ = [ln(B/S) − σ²·τ^(2H)/2] / (σ·τ^H)
 ```
 
 ### Boundary Conditions
 
-- S = barrier: Returns 1 (barrier already touched)
-- S ≥ barrier (UP) or S ≤ barrier (DOWN): Returns 1 (barrier breached)
+- S = barrier: Returns 1 (already touching)
+- S ≥ barrier (UP) or S ≤ barrier (DOWN): Returns 1 (breached)
 - τ ≤ 0 or σ ≤ 0 (expired, not breached): Returns 0
-- Output is clamped to [0, 1]
-
-### Derivation Context
-
-These formulas come from the reflection principle of Brownian motion. The standard one-touch barrier price under geometric Brownian motion with r = 0 is:
-
-```
-P = (S/H)^(1 − 2r/σ²) · Φ(d)  +  Φ(−d + σ√τ)
-```
-
-With r = 0, the (S/H) exponent simplifies to 1, giving the formulas above.
+- Output clamped to [0, 1]
 
 **Implementation:** `priceHit(S, barrier, sigma, tau, isUpBarrier, H)` in `engine.ts`
 
@@ -134,32 +181,15 @@ With r = 0, the (S/H) exponent simplifies to 1, giving the formulas above.
 
 ### Problem
 
-The standard Black-Scholes model uses √τ (τ^0.5) for time scaling, which assumes the underlying follows geometric Brownian motion (GBM). This implies returns scale as √t — the square-root-of-time rule.
-
-Comparing model projections against real Polymarket data across multiple events with different expirations revealed:
-
-| Strike position | Model accuracy |
-|----------------|---------------|
-| Near ATM | Underestimates convergence speed (theta too slow) |
-| Far OTM | Good estimation |
-| Very far OTM | Slight overestimation |
-
-### Root Cause
-
-Crypto markets exhibit:
-- **Faster mean-reversion** for near-ATM moves
-- **Heavier tails** in return distributions
-- Returns that scale faster than √t for short time horizons
-
-This means the effective "time speed" is faster than Brownian motion predicts for ATM strikes.
+Standard Black-Scholes uses τ^0.5 for time scaling (Brownian motion). Comparing model projections against Polymarket data showed the model underestimates convergence speed near ATM strikes — the implied "time to convergence" is shorter than √τ predicts.
 
 ### Solution
 
-Replace the fixed τ^0.5 time scaling with a tunable τ^H:
+Replace fixed τ^0.5 with a tunable τ^H:
 
 ```
-Standard:    σ√τ  = σ·τ^0.5     and    σ²τ = σ²·τ^1.0
-Generalized: σ·τ^H              and    σ²·τ^(2H)
+Standard:    σ·√τ  = σ·τ^0.5    and   σ²·τ = σ²·τ^1.0
+Generalized: σ·τ^H              and   σ²·τ^(2H)
 ```
 
 **Effects of H:**
@@ -168,30 +198,16 @@ Generalized: σ·τ^H              and    σ²·τ^(2H)
 |---------|----------|
 | H = 0.50 | Standard Black-Scholes (Brownian motion) |
 | H > 0.50 | Faster time decay → faster ATM convergence |
-| H < 0.50 | Slower time decay → slower convergence |
-| H ≈ 0.55–0.65 | Empirically best fit for crypto markets |
+| H < 0.50 | Slower time decay |
+| H ≈ 0.60–0.70 | Empirically best fit for crypto Polymarket events |
 
-**Why it works:** Increasing H makes τ^H < τ^0.5 (since τ < 1 for sub-annual options), which effectively reduces the "time value" faster. This causes:
-- ATM options to converge to their intrinsic value more quickly
-- OTM options to remain relatively unaffected (they're dominated by the moneyness term ln(S/K), not the time term)
+**Default:** H = 0.65 (changed from 0.50 in V2).
 
-### Connection to Fractional Brownian Motion
+> H is only applied to **Polymarket** pricing. Bybit vanilla options use the standard H = 0.5 Black-Scholes formula, as they follow exchange-traded convention.
 
-The exponent H is analogous to the **Hurst exponent** in fractional Brownian motion (fBM):
-- H = 0.5: Standard Brownian motion (independent increments)
-- H > 0.5: Persistent/trending behavior (positive autocorrelation)
-- H < 0.5: Mean-reverting behavior (negative autocorrelation)
+**Connection to Fractional Brownian Motion:** H is analogous to the Hurst exponent in fBM. H > 0.5 implies persistent/trending increments. The implementation is a pragmatic approximation — only the time scaling is modified, not the full fBM framework.
 
-However, our implementation is a pragmatic approximation — we only replace the time scaling, not the full fBM framework. This keeps the model simple while capturing the primary effect.
-
-### UI Control
-
-The H parameter is controlled via a purple slider in the UI:
-- Range: 0.40 to 0.80
-- Step: 0.01
-- Default: 0.50
-
-Changing H recalibrates all IVs (since IV depends on H) and recomputes all projection curves.
+**UI Control:** Purple slider, range 0.40–0.80, step 0.01, default 0.65. Changing H triggers recalibration of all Polymarket IVs and recomputes all projection curves.
 
 ---
 
@@ -199,35 +215,30 @@ Changing H recalibrates all IVs (since IV depends on H) and recomputes all proje
 
 ### Purpose
 
-Each strike has a live market YES price from Polymarket. We need to find the implied volatility σ such that:
+Each Polymarket strike has a live YES price. We solve for σ such that:
 
 ```
 priceOptionYes(S, K, σ, τ, optionType, isUpBarrier, H) = marketYesPrice
 ```
 
-This ensures the model reproduces the current market price exactly at the current spot.
+This ensures the model exactly reproduces the current market price at the current spot.
 
 ### Method: Brent's Root-Finding
 
-We solve for σ in the equation f(σ) = priceOptionYes(…, σ, …) − marketYesPrice = 0 using **Brent's method**, which combines:
-- Bisection (guaranteed convergence)
-- Secant method (fast convergence)
-- Inverse quadratic interpolation (superlinear convergence)
+Solves `f(σ) = model(σ) − marketYesPrice = 0` over σ ∈ [0.01, 10.0] using Brent's method (bisection + secant + inverse quadratic interpolation).
 
 **Parameters:**
-- Search interval: σ ∈ [0.01, 10.0] (1% to 1000% annualized vol)
+- Search interval: σ ∈ [0.01, 10.0]
 - Tolerance: 10⁻⁶
 - Max iterations: 100
 
 **Edge cases:**
-- YES price ≤ 0.001 → returns σ = 0.01 (near-zero option)
-- YES price ≥ 0.999 → returns σ = 10.0 (near-certain option)
-- τ ≤ 0 → returns null (expired)
-- If f(a)·f(b) > 0 (no sign change): falls back to a grid search over σ in steps of 0.05
+- YES price ≤ 0.001 → σ = 0.01
+- YES price ≥ 0.999 → σ = 10.0
+- τ ≤ 0 → null (expired)
+- No sign change found → grid search fallback in steps of 0.05
 
-### Round-Trip Property
-
-By construction: `price → solveImpliedVol(H) → priceOptionYes(H)` returns the original price. This holds for any value of H, since H is passed consistently through both calibration and pricing.
+> Bybit IVs are **not** calibrated — they are read directly from Bybit's `markIv` field.
 
 **Implementation:** `solveImpliedVol(S, K, tau, yesPrice, optionType, isUpBarrier, H)` in `engine.ts`
 
@@ -235,114 +246,115 @@ By construction: `price → solveImpliedVol(H) → priceOptionYes(H)` returns th
 
 ## IV Smile and Sticky-Moneyness
 
-### Problem: Sticky-Strike Inaccuracy
+### Problem
 
-The basic model calibrates one fixed IV per strike at the current spot, then uses that same IV when projecting at different spot levels. This is the **sticky-strike** assumption.
+With constant IV per strike (sticky-strike), the model underestimates construction cost when spot moves, because it ignores the vol smile shifting with the spot.
 
-Real market observation: buying a 72000 NO + 68000 YES spread (cost 1.54), then assuming a 2000-point spot move, the market showed construction cost of 1.51 but the model predicted 1.44 — a significant underestimate.
+### Polymarket Smile
 
-**Root cause:** When spot moves, the **moneyness** of each strike changes. The market reprices based on the new moneyness (sticky-moneyness or sticky-delta), but the model was using the old IV calibrated at the original moneyness.
-
-**Why shorter expirations amplify the effect:** The vol smile is steeper for short-dated options — the IV difference between ATM and OTM is larger. So the error from using the "wrong" moneyness IV grows as expiry approaches.
-
-### Solution: IV Smile Interpolation
-
-Instead of fixed IV per strike, we build a **volatility smile** from all available market strikes:
-
-**Step 1 — Build the smile:**
-For each market strike K_i with valid price (0.001 < price < 0.999):
+**Build:** For each market strike K_i with valid price:
 ```
 moneyness_i = ln(S_current / K_i)
-IV_i = solveImpliedVol(S_current, K_i, τ, yesPrice_i, optionType, isUpBarrier_i, H)
+IV_i = solveImpliedVol(S_current, K_i, τ, yesPrice_i, …, H)
 ```
-Result: array of `{moneyness, iv}` pairs, sorted by moneyness.
+Result: sorted array of `{moneyness, iv}` pairs.
 
-**Step 2 — Interpolation at projection:**
-For each projected spot S' and each portfolio strike K_j:
+**Apply:** For projected spot S' and each position strike K_j:
 ```
-m' = ln(S' / K_j)    ← new moneyness at projected spot
-IV' = interpolateSmile(smile, m')    ← look up from smile
+m' = ln(S' / K_j)
+σ' = interpolateSmile(smile, m')     ← piecewise linear, flat extrapolation
+yesPrice = priceOptionYes(S', K_j, σ', τ, …)
 ```
-The interpolation is piecewise linear between smile points, with flat extrapolation at both edges.
 
-**Step 3 — Pricing with smile IV:**
+### Bybit Smile
+
+**Build:** For each Bybit instrument in the chain:
 ```
-yesPrice = priceOptionYes(S', K_j, IV', τ, optionType, isUpBarrier_j, H)
+moneyness_i = ln(S_current / K_i)
+IV_i = ticker.markIv
 ```
+
+**Apply:** Same interpolation approach as Polymarket. When projecting at S', the IV for each position is looked up from the smile at the new moneyness, producing a smooth curve without the constant-IV kink.
 
 ### Key Properties
 
-- At the calibration spot (S' = S_current), the moneyness matches the original calibration, so the interpolated IV equals the calibrated IV — P&L = 0 at current spot is preserved.
-- The smile is built from **all** market strikes (not just selected ones), giving richer interpolation with more data points.
-- The smile is automatically rebuilt when spot price, H, or expiry changes.
-- No additional user controls needed — the smile is fully automatic.
+- Both smiles are rebuilt automatically when spot price, H, or the option chain changes
+- The Bybit smile uses `markIv` directly (not solved); no Brent's step needed
+- At calibration spot (S' = S_current), interpolated IV = calibrated IV → P&L = 0 at current spot is preserved
+- Minimum IV clamp of 0.001 prevents degenerate σ ≤ 0 branches in the BS formula
 
-### Data Types
+**Data type:** `SmilePoint { moneyness: number; iv: number }` in `engine.ts`
 
-```typescript
-interface SmilePoint {
-  moneyness: number;  // ln(S_calibration / K)
-  iv: number;         // calibrated implied volatility
-}
-```
-
-**Implementation:** `SmilePoint`, `interpolateSmile()` in `engine.ts`; smile construction in `SecondScreen.tsx`
+**Implementation:** `interpolateSmile(smile, moneyness)` in `engine.ts`; smile construction in `ChartScreen.tsx`
 
 ---
 
-## P&L Curve Computation
+## Combined Portfolio P&L
+
+The portfolio combines Polymarket and Bybit positions into a single P&L curve at each time snapshot.
 
 ### Formula
 
-For a portfolio of selected strikes at a given time-to-expiry τ:
-
 ```
-P&L(S') = Σ projectedValue_i(S') − Σ entryPrice_i
-```
-
-Where for each strike i:
-```
-If side = YES:  projectedValue = priceOptionYes(S', K_i, IV(S',K_i), τ, …)
-If side = NO:   projectedValue = 1 − priceOptionYes(S', K_i, IV(S',K_i), τ, …)
+P&L(S') = Σ_poly [projectedPoly_i(S') − entryPrice_i] × qty_i
+         + Σ_bybit [projectedBybit_j(S') − entryPrice_j] × sideMultiplier_j × qty_j
+         − Σ_bybit entryFee_j
 ```
 
-IV(S', K_i) is obtained from smile interpolation when a smile is available, otherwise from the strike's fixed calibrated IV.
+Where:
+- `projectedPoly_i` = `priceOptionYes(…)` for YES side, `1 − priceOptionYes(…)` for NO side
+- `projectedBybit_j` = `bsPrice(S', K_j, σ'(S',K_j), τ_j, type_j)` with smile-interpolated IV
+- `sideMultiplier_j` = +1 for buy, −1 for sell
 
-### Four Projection Curves
+### Time Snapshots
+
+Four snapshots are computed; labels adapt based on which sources are loaded:
+
+**Single source:**
+
+| Index | τ used |
+|-------|--------|
+| Now | τ_now |
+| 1/3 to expiry | τ_now × 2/3 |
+| 2/3 to expiry | τ_now × 1/3 |
+| At expiry | 0 |
+
+**Both sources (different expiry dates):**
 
 | Index | Label | τ used |
 |-------|-------|--------|
-| 0 | Now | τ_now (full time to expiry) |
-| 1 | 1/3 to expiry | τ_now × 2/3 |
-| 2 | 2/3 to expiry | τ_now × 1/3 |
-| 3 | At expiry | τ = 0 (step function) |
+| 0 | Now | τ_now for each source |
+| 1 | ½ to earlier expiry | midpoint to earlier expiry |
+| 2 | At earlier expiry | τ = 0 for earlier, τ_remaining for later |
+| 3 | At later expiry | τ = 0 for both |
 
-Each curve is computed at 200 evenly-spaced spot prices between the user-defined lower and upper bounds.
+**Individual overlay curves** (shown when both sources are active):
+- Poly Now, Poly Expiry — Polymarket-only P&L
+- Bybit Now, Bybit Expiry — Bybit-only P&L
 
-**Implementation:** `computePnlCurve(strikes, lower, upper, tau, optionType, H, smile)` in `engine.ts`
+These allow visual separation of each source's contribution.
+
+**Implementation:** `computeCombinedPnlCurve(…)` in `engine.ts`; `usePortfolioCurves` hook in `hooks/usePortfolioCurves.ts`
 
 ---
 
 ## Expiry Payoff
 
-At expiry (τ → 0), option values become step functions:
+At τ = 0, options become step functions:
 
-### "Above" type
+**"Above":**
 ```
 YES payoff = 1 if S ≥ K, else 0
-NO payoff  = 1 if S < K, else 0
 ```
 
-### "Hit" type
-The hit-type payoff at expiry depends on barrier direction:
+**"Hit":**
 ```
 UP barrier:   YES payoff = 1 if S ≥ K, else 0
 DOWN barrier: YES payoff = 1 if S ≤ K, else 0
 ```
 
-Note: This is the payoff if the barrier has not been hit before expiry. In practice, if the barrier was touched at any earlier point, the option would have already paid out. The expiry step function represents the worst case (never touched).
-
-**Implementation:** `computeExpiryPnl(strikes, lower, upper, optionType)` in `engine.ts`
+**Bybit call:** `max(S − K, 0)`
+**Bybit put:** `max(K − S, 0)`
 
 ---
 
@@ -350,42 +362,28 @@ Note: This is the payoff if the barrier has not been hit before expiry. In pract
 
 ### Why r = 0?
 
-The risk-free rate is set to zero because:
-1. Polymarket options are short-dated (hours to days), making the discount factor negligible
-2. Crypto markets don't have a well-defined risk-free rate
-3. Polymarket prices already embed any discounting
+Polymarket options are short-dated (hours to days), making the discount factor negligible. Crypto markets lack a well-defined risk-free rate and Polymarket prices already embed any discounting.
 
 ### Why calibrate from YES price?
 
-Implied volatility is the same whether calibrated from the YES or NO price:
-```
-NO price = 1 − YES price
-f(σ) = model(σ) − YES price = 0   ⟺   (1 − model(σ)) − NO price = 0
-```
+Implied volatility is the same from YES or NO: `f(σ) = model(σ) − YES = 0` iff `(1−model(σ)) − NO = 0`. We always use YES for consistency.
 
-We always calibrate from YES for consistency.
+### Why Brent's over Newton-Raphson?
 
-### Why Brent's method over Newton-Raphson?
-
-1. Brent's doesn't require the derivative (vega), keeping the code simpler
-2. Guaranteed convergence (falls back to bisection)
-3. Still achieves superlinear convergence in practice
-4. The slight performance cost is irrelevant for our use case (~10 strikes)
+No vega computation needed, guaranteed convergence, and superlinear speed in practice. The small performance cost (~10 strikes per recalc) is irrelevant.
 
 ### Why separate UP/DOWN barrier formulas?
 
-A single formula could handle both directions with appropriate sign changes, but separate formulas are:
-1. Easier to verify against textbook formulas
-2. Clearer about the boundary conditions (S ≥ H vs S ≤ H)
-3. Less error-prone (no sign-flip bugs)
+Easier to verify against textbook derivations, clearer boundary conditions, less risk of sign-flip bugs.
 
-### Why build smile from ALL strikes, not just selected?
+### Why build Bybit smile from the full chain, not just selected positions?
 
-Selected strikes may be just 1–2 positions, giving poor interpolation. Using all available market strikes (typically 5–15) provides a much richer smile curve, especially at the edges.
+Selected positions may be 1–2 contracts. Using all available instruments (typically 20–40 per expiry) gives a much denser and more accurate smile, especially at the wings.
 
 ### Why linear interpolation for the smile?
 
-1. Simple and predictable — no oscillation artifacts
-2. Sufficient for 5–15 data points in a roughly monotonic-by-wing curve
-3. Flat extrapolation prevents extreme values outside the observed range
-4. More sophisticated methods (cubic spline, SABR) would add complexity without clear benefit given the data density
+Simple, no oscillation artifacts, sufficient for 5–40 data points in a roughly monotone-per-wing curve. Flat extrapolation prevents extreme values outside the observed range. Cubic spline or SABR would add complexity without clear benefit at this data density.
+
+### Why clamp IV to 0.001 minimum for Bybit?
+
+The BS formula has a degenerate branch when σ → 0 (delta becomes a step function, gamma spikes to infinity). Clamping prevents numerical instability in the smile-interpolated regions between strikes where the interpolated IV might fall very close to zero.
