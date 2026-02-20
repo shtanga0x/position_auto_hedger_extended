@@ -26,28 +26,24 @@ export function interpolateSmile(smile: SmilePoint[], moneyness: number): number
 
 /**
  * Normal CDF using rational approximation (Abramowitz & Stegun 26.2.17)
+ * max |error| < 7.5e-8
  */
 export function normalCDF(x: number): number {
   if (x > 8) return 1;
   if (x < -8) return 0;
 
-  const a1 = 0.254829592;
-  const a2 = -0.284496736;
-  const a3 = 1.421413741;
-  const a4 = -1.453152027;
-  const a5 = 1.061405429;
-  const p = 0.3275911;
+  if (x < 0) return 1.0 - normalCDF(-x);
 
-  const sign = x < 0 ? -1 : 1;
-  const absX = Math.abs(x);
-  const t = 1.0 / (1.0 + p * absX);
-  const t2 = t * t;
-  const t3 = t2 * t;
-  const t4 = t3 * t;
-  const t5 = t4 * t;
-  const y = 1.0 - (a1 * t + a2 * t2 + a3 * t3 + a4 * t4 + a5 * t5) * Math.exp(-absX * absX / 2);
+  const b1 =  0.319381530;
+  const b2 = -0.356563782;
+  const b3 =  1.781477937;
+  const b4 = -1.821255978;
+  const b5 =  1.330274429;
+  const p  =  0.2316419;
 
-  return 0.5 * (1.0 + sign * y);
+  const t = 1.0 / (1.0 + p * x);
+  const poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))));
+  return 1.0 - (1.0 / Math.sqrt(2 * Math.PI)) * Math.exp(-x * x / 2) * poly;
 }
 
 /**
