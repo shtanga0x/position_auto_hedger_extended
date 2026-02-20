@@ -19,6 +19,7 @@ interface PortfolioCurvesInput {
   optionType: OptionType;
   H: number;
   smile?: SmilePoint[];
+  bybitSmile?: SmilePoint[]; // IV smile from Bybit option chain (sticky-moneyness)
   numPoints?: number; // default 500
 }
 
@@ -125,11 +126,14 @@ function computePolyOnlyCurve(
   return points;
 }
 
-/** Compute P&L curve for only Bybit positions at given taus (includes fees) */
+/** Compute P&L curve for only Bybit positions at given taus (includes fees).
+ *  When bybitSmile is provided, the IV is interpolated per-spot to avoid the
+ *  flat-vol kink artifact that appears at the strike with a constant markIv. */
 function computeBybitOnlyCurve(
   positions: BybitPosition[],
   grid: number[],
   taus: Map<string, number>,
+  bybitSmile?: SmilePoint[],
 ): ProjectionPoint[] {
   if (positions.length === 0 || grid.length === 0) return [];
   const points: ProjectionPoint[] = [];
@@ -138,7 +142,11 @@ function computeBybitOnlyCurve(
     let pnl = 0;
     for (const pos of positions) {
       const tau = taus.get(pos.symbol) ?? 0;
-      const currentValue = bsPrice(cryptoPrice, pos.strike, pos.markIv, tau, pos.optionsType);
+      const rawIv = bybitSmile && bybitSmile.length > 0
+        ? interpolateSmile(bybitSmile, Math.log(cryptoPrice / pos.strike))
+        : pos.markIv;
+      const iv = Math.max(rawIv, 0.001); // clamp: never hit the kinked sigma≤0 branch
+      const currentValue = bsPrice(cryptoPrice, pos.strike, iv, tau, pos.optionsType);
       const sideMultiplier = pos.side === 'buy' ? 1 : -1;
       pnl += (currentValue - pos.entryPrice) * sideMultiplier * pos.quantity - pos.entryFee;
     }
@@ -158,7 +166,8 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     optionType,
     H,
     smile,
-    numPoints = 500,
+    bybitSmile,
+    numPoints = 2000,
   } = input;
 
   return useMemo(() => {
@@ -197,7 +206,7 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
         polyPositions, bybitPositions,
         lowerPrice, upperPrice,
         polyTau, bybitTaus,
-        optionType, H, smile, numPoints, grid,
+        optionType, H, smile, bybitSmile, numPoints, grid,
       );
     });
 
@@ -221,8 +230,8 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       bybitTausNow.set(pos.symbol, Math.max(((pos.expiryTimestamp / 1000) - nowSec) / YEAR_SEC, 0));
       bybitTausExpiry.set(pos.symbol, 0);
     }
-    const bybitNowCurve = computeBybitOnlyCurve(bybitPositions, grid, bybitTausNow);
-    const bybitExpiryCurve = computeBybitOnlyCurve(bybitPositions, grid, bybitTausExpiry);
+    const bybitNowCurve = computeBybitOnlyCurve(bybitPositions, grid, bybitTausNow, bybitSmile);
+    const bybitExpiryCurve = computeBybitOnlyCurve(bybitPositions, grid, bybitTausExpiry, bybitSmile);
 
     // Total entry cost and fees
     let totalEntryCost = 0;
@@ -244,5 +253,5 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       totalEntryCost,
       totalFees,
     };
-  }, [polyPositions, bybitPositions, lowerPrice, upperPrice, polyTauNow, polyExpiryTs, optionType, H, smile, numPoints]);
+  }, [polyPositions, bybitPositions, lowerPrice, upperPrice, polyTauNow, polyExpiryTs, optionType, H, smile, bybitSmile, numPoints]);
 }

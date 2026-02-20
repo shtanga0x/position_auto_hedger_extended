@@ -234,6 +234,21 @@ export function ChartScreen({
   const polyTimeToExpirySec = polyExpiryTs > 0 ? polyExpiryTs - nowTs : 0;
   const polyTauNow = Math.max(polyTimeToExpirySec / (365.25 * 24 * 3600), 0);
 
+  // Build IV smile from all Bybit option chain tickers (sticky-moneyness, same expiry).
+  // This replaces the constant markIv with a smooth smile-interpolated IV as spot sweeps,
+  // eliminating the kink artifact that appears at the strike with a flat-vol assumption.
+  const bybitIvSmile: SmilePoint[] = useMemo(() => {
+    if (!bybitChain || spotPrice <= 0) return [];
+    const points: SmilePoint[] = [];
+    for (const [symbol, ticker] of bybitChain.tickers) {
+      if (ticker.markIv <= 0) continue;
+      const inst = bybitChain.instruments.find(i => i.symbol === symbol);
+      if (!inst) continue;
+      points.push({ moneyness: Math.log(spotPrice / inst.strike), iv: ticker.markIv });
+    }
+    return points.sort((a, b) => a.moneyness - b.moneyness);
+  }, [bybitChain, spotPrice]);
+
   // Build IV smile from all poly markets
   const ivSmile: SmilePoint[] = useMemo(() => {
     if (!spotPrice || polyTauNow <= 0 || polyMarkets.length === 0) return [];
@@ -270,6 +285,7 @@ export function ChartScreen({
     optionType,
     H: hExponent,
     smile: ivSmile.length > 0 ? ivSmile : undefined,
+    bybitSmile: bybitIvSmile.length > 0 ? bybitIvSmile : undefined,
   });
 
   const handleSliderChange = useCallback((_: unknown, value: number | number[]) => {

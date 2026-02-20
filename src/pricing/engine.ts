@@ -228,7 +228,7 @@ export function computePnlCurve(
   optionType: OptionType,
   H: number = 0.5,
   smile?: SmilePoint[],
-  numPoints: number = 200
+  numPoints: number = 2000
 ): ProjectionPoint[] {
   if (strikes.length === 0 || numPoints < 2) return [];
 
@@ -266,7 +266,7 @@ export function computeExpiryPnl(
   lowerPrice: number,
   upperPrice: number,
   optionType: OptionType = 'above',
-  numPoints: number = 200
+  numPoints: number = 2000
 ): ProjectionPoint[] {
   if (strikes.length === 0 || numPoints < 2) return [];
 
@@ -349,7 +349,7 @@ export function computeBybitPnlCurve(
   lowerPrice: number,
   upperPrice: number,
   tau: number,
-  numPoints: number = 200,
+  numPoints: number = 2000,
 ): ProjectionPoint[] {
   if (numPoints < 2) return [];
 
@@ -373,7 +373,7 @@ export function computeBybitPnlCurve(
 export function buildPriceGrid(
   lower: number,
   upper: number,
-  numPoints: number = 500,
+  numPoints: number = 2000,
 ): number[] {
   const range = upper - lower;
   if (range <= 0 || numPoints < 2) return [];
@@ -390,6 +390,10 @@ export function buildPriceGrid(
  * Compute combined portfolio P&L curve at one time snapshot.
  * Sums Polymarket P&L (in contract units, scaled by quantity) and Bybit P&L (in USD).
  * Uses adaptive grid for better resolution near strikes.
+ *
+ * @param bybitSmile - Optional IV smile built from the Bybit option chain (sticky-moneyness).
+ *   When provided, the IV for each Bybit position is interpolated from this smile rather than
+ *   held constant at markIv, producing a smoother and more realistic P&L curve.
  */
 export function computeCombinedPnlCurve(
   polyPositions: PolymarketPosition[],
@@ -401,7 +405,8 @@ export function computeCombinedPnlCurve(
   optionType: OptionType,
   H: number,
   smile: SmilePoint[] | undefined,
-  numPoints: number = 500,
+  bybitSmile: SmilePoint[] | undefined,
+  numPoints: number = 2000,
   prebuiltGrid?: number[],
 ): ProjectionPoint[] {
   if (polyPositions.length === 0 && bybitPositions.length === 0) return [];
@@ -423,10 +428,16 @@ export function computeCombinedPnlCurve(
       totalPnl += (projectedValue - pos.entryPrice) * pos.quantity;
     }
 
-    // Bybit positions (subtract entry fee)
+    // Bybit positions — use smile-interpolated IV when available so the curve
+    // avoids the flat-vol kink artifact at the strike price.
     for (const pos of bybitPositions) {
       const tau = bybitTaus.get(pos.symbol) ?? 0;
-      const currentValue = bsPrice(cryptoPrice, pos.strike, pos.markIv, tau, pos.optionsType);
+      const rawIv = bybitSmile && bybitSmile.length > 0
+        ? interpolateSmile(bybitSmile, Math.log(cryptoPrice / pos.strike))
+        : pos.markIv;
+      // Clamp to a minimum to avoid the sigma≤0 intrinsic-value branch (kinked at K).
+      const iv = Math.max(rawIv, 0.001);
+      const currentValue = bsPrice(cryptoPrice, pos.strike, iv, tau, pos.optionsType);
       const sideMultiplier = pos.side === 'buy' ? 1 : -1;
       totalPnl += (currentValue - pos.entryPrice) * sideMultiplier * pos.quantity - pos.entryFee;
     }
