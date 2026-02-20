@@ -376,6 +376,21 @@ export function ProjectionChart({
 
   const formatYAxisPnl = useCallback((v: number) => v.toFixed(2), []);
 
+  // Right axis: P&L expressed as % of entry cost
+  const absCost = Math.abs(totalEntryCost ?? 0);
+  const { yDomainPct, yTicksPct } = useMemo(() => {
+    if (absCost <= 0) return { yDomainPct: yDomain, yTicksPct: yTicks };
+    return {
+      yDomainPct: [yDomain[0] / absCost * 100, yDomain[1] / absCost * 100] as [number, number],
+      yTicksPct: yTicks.map(t => Math.round(t / absCost * 1000) / 10),
+    };
+  }, [yDomain, yTicks, absCost]);
+
+  const formatYAxisPct = useCallback((v: number) => {
+    const abs = Math.abs(v);
+    return (abs >= 10 ? v.toFixed(0) : v.toFixed(1)) + '%';
+  }, []);
+
   const handleLegendClick = useCallback((label: string) => {
     setHiddenLines(prev => {
       const next = new Set(prev);
@@ -485,12 +500,12 @@ export function ProjectionChart({
           <YAxis
             yAxisId="right"
             orientation="right"
-            domain={yDomain}
-            ticks={yTicks}
-            tickFormatter={formatYAxisPnl}
+            domain={yDomainPct}
+            ticks={yTicksPct}
+            tickFormatter={formatYAxisPct}
             stroke={axisColor}
             fontSize={14}
-            label={{ value: 'P&L', angle: 90, position: 'insideRight', style: { fill: axisColor, fontSize: 15 } }}
+            label={{ value: 'P&L (%)', angle: 90, position: 'insideRight', style: { fill: axisColor, fontSize: 15 } }}
           />
           <Tooltip content={renderTooltip} />
           <ReferenceLine yAxisId="left" y={0} stroke={zeroLineColor} strokeDasharray="3 3" />

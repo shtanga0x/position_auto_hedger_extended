@@ -559,7 +559,7 @@ export function ChartScreen({
           <Box sx={{ display: 'grid', gridTemplateColumns: hasBothSources ? '1fr 2fr' : '1fr', gap: 2, alignItems: 'flex-start' }}>
             {polyPositions.length > 0 && (
               <Box sx={{ minWidth: 0 }}>
-                <Typography variant="caption" sx={{ color: '#4A90D9', fontWeight: 600, display: 'block', mb: 0.5 }}>Polymarket</Typography>
+                <Typography sx={{ color: '#4A90D9', fontWeight: 600, mb: 0.5 }}>Polymarket</Typography>
                 {polyPositions.map((pos, i) => (
                   <Typography key={i} variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem' }}>
                     {pos.groupItemTitle} — {pos.side} ×{pos.quantity} @ {pos.entryPrice.toFixed(4)}
@@ -569,7 +569,7 @@ export function ChartScreen({
             )}
             {bybitPositions.length > 0 && (
               <Box sx={{ minWidth: 0 }}>
-                <Typography variant="caption" sx={{ color: '#FF8C00', fontWeight: 600, display: 'block', mb: 0.5 }}>Bybit</Typography>
+                <Typography sx={{ color: '#FF8C00', fontWeight: 600, mb: 0.5 }}>Bybit</Typography>
                 {bybitPositions.map((pos, i) => (
                   <Typography key={i} variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem' }}>
                     {pos.symbol} — {pos.side} ×{pos.quantity} @ ${pos.entryPrice.toFixed(2)} (fee: ${pos.entryFee.toFixed(2)})
