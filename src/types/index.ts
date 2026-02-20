@@ -106,6 +106,7 @@ export interface BybitPosition {
   entryPrice: number;       // premium in USD
   markIv: number;
   quantity: number;
+  entryFee: number;         // trading fee in USD
 }
 
 export interface PolymarketPosition extends SelectedStrike {

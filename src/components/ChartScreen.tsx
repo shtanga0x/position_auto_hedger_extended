@@ -28,7 +28,7 @@ import type {
   Side,
   BybitSide,
 } from '../types';
-import { solveImpliedVol, type SmilePoint } from '../pricing/engine';
+import { solveImpliedVol, bybitTradingFee, type SmilePoint } from '../pricing/engine';
 import { ProjectionChart } from './ProjectionChart';
 import { usePortfolioCurves } from '../hooks/usePortfolioCurves';
 
@@ -88,7 +88,7 @@ export function ChartScreen({
   const [sliderBounds, setSliderBounds] = useState<[number, number]>([0, 0]);
   const [hExponent, setHExponent] = useState(0.5);
 
-  // --- Poly position state (moved from PolymarketPanel) ---
+  // --- Poly position state ---
   const [polySelections, setPolySelections] = useState<Map<string, number>>(new Map());
 
   const handlePolyToggle = useCallback((marketId: string, side: Side) => {
@@ -144,7 +144,7 @@ export function ChartScreen({
     return result;
   }, [polyMarkets, polySelections, spotPrice, polyEvent, optionType]);
 
-  // --- Bybit position state (moved from BybitOptionChain) ---
+  // --- Bybit position state ---
   const [bybitSelections, setBybitSelections] = useState<Map<string, BybitSelectedOption>>(new Map());
 
   const handleBybitSideToggle = useCallback((symbol: string, newSide: BybitSide | null) => {
@@ -194,19 +194,23 @@ export function ChartScreen({
       const inst = bybitChain.instruments.find(i => i.symbol === symbol);
       if (!ticker || !inst) continue;
 
+      const entryPrice = sel.side === 'buy' ? ticker.ask1Price : ticker.bid1Price;
+      const entryFee = bybitTradingFee(spotPrice, entryPrice, sel.quantity);
+
       result.push({
         symbol,
         optionsType: inst.optionsType,
         strike: inst.strike,
         expiryTimestamp: inst.expiryTimestamp,
         side: sel.side,
-        entryPrice: sel.side === 'buy' ? ticker.ask1Price : ticker.bid1Price,
+        entryPrice,
         markIv: ticker.markIv,
         quantity: sel.quantity,
+        entryFee,
       });
     }
     return result;
-  }, [bybitSelections, bybitChain]);
+  }, [bybitSelections, bybitChain, spotPrice]);
 
   // Compute slider bounds from all strikes (poly + bybit)
   useEffect(() => {
@@ -255,6 +259,7 @@ export function ChartScreen({
     bybitNowCurve,
     bybitExpiryCurve,
     totalEntryCost,
+    totalFees,
   } = usePortfolioCurves({
     polyPositions,
     bybitPositions,
@@ -285,6 +290,7 @@ export function ChartScreen({
 
   const hasData = combinedCurves.length > 0 && combinedCurves[0].length > 0;
   const expiryDate = polyEvent ? new Date(polyEvent.endDate * 1000) : null;
+  const hasBothSources = polyMarkets.length > 0 && bybitChain !== null;
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', p: 3, gap: 3 }}>
@@ -316,200 +322,248 @@ export function ChartScreen({
         </Box>
       </Box>
 
-      {/* Polymarket strike selection */}
-      {polyMarkets.length > 0 && (
-        <Accordion defaultExpanded elevation={0} sx={{ border: '1px solid rgba(139, 157, 195, 0.15)', '&:before': { display: 'none' } }}>
-          <AccordionSummary expandIcon={<ExpandMore />}>
-            <Typography sx={{ fontWeight: 600, color: '#4A90D9' }}>Polymarket Strikes</Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            {/* Header */}
-            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 100px 100px 80px', gap: 1, mb: 1, px: 1 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>Strike</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>YES</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>NO</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Qty</Typography>
-            </Box>
-
-            {polyMarkets.map(market => {
-              const yesKey = polySelKey(market.id, 'YES');
-              const noKey = polySelKey(market.id, 'NO');
-              const yesSelected = polySelections.has(yesKey);
-              const noSelected = polySelections.has(noKey);
-              const activeKey = yesSelected ? yesKey : noSelected ? noKey : null;
-              const qty = activeKey ? (polySelections.get(activeKey) ?? 1) : 1;
-
-              return (
-                <Box key={market.id} sx={{
-                  display: 'grid', gridTemplateColumns: '1fr 100px 100px 80px', gap: 1, alignItems: 'center', px: 1, py: 0.5,
-                  borderBottom: '1px solid rgba(139, 157, 195, 0.06)',
-                  bgcolor: (yesSelected || noSelected) ? 'rgba(0, 209, 255, 0.03)' : 'transparent',
-                  '&:hover': { bgcolor: 'rgba(139, 157, 195, 0.04)' },
-                }}>
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    {market.groupItemTitle || market.question}
-                  </Typography>
-
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
-                    <Checkbox checked={yesSelected} onChange={() => handlePolyToggle(market.id, 'YES')} size="small" sx={{ '&.Mui-checked': { color: '#22C55E' }, p: 0.5 }} />
-                    <Typography variant="body2" sx={{ color: yesSelected ? '#22C55E' : 'text.secondary', fontSize: '0.875rem', minWidth: 35, textAlign: 'right' }}>
-                      {(market.currentPrice * 100).toFixed(1)}
-                    </Typography>
-                  </Box>
-
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
-                    <Checkbox checked={noSelected} onChange={() => handlePolyToggle(market.id, 'NO')} size="small" sx={{ '&.Mui-checked': { color: '#EF4444' }, p: 0.5 }} />
-                    <Typography variant="body2" sx={{ color: noSelected ? '#EF4444' : 'text.secondary', fontSize: '0.875rem', minWidth: 35, textAlign: 'right' }}>
-                      {((1 - market.currentPrice) * 100).toFixed(1)}
-                    </Typography>
-                  </Box>
-
-                  <TextField
-                    type="number"
-                    size="small"
-                    value={activeKey ? qty : ''}
-                    disabled={!activeKey}
-                    onChange={e => {
-                      const v = parseInt(e.target.value, 10);
-                      if (yesSelected) handlePolyQtyChange(market.id, 'YES', isNaN(v) ? 0 : v);
-                      else if (noSelected) handlePolyQtyChange(market.id, 'NO', isNaN(v) ? 0 : v);
-                    }}
-                    inputProps={{ min: 1, style: { textAlign: 'center', padding: '4px 8px' } }}
-                    sx={{ '& .MuiOutlinedInput-root': { backgroundColor: 'transparent' } }}
-                  />
+      {/* Strike selection: side-by-side (poly 1/3, bybit 2/3) */}
+      <Box sx={{ display: 'grid', gridTemplateColumns: hasBothSources ? '1fr 2fr' : '1fr', gap: 3 }}>
+        {/* Polymarket strikes */}
+        {polyMarkets.length > 0 && (
+          <Accordion defaultExpanded elevation={0} sx={{ border: '1px solid rgba(139, 157, 195, 0.15)', '&:before': { display: 'none' } }}>
+            <AccordionSummary expandIcon={<ExpandMore />}>
+              <Typography sx={{ fontWeight: 600, color: '#4A90D9' }}>Polymarket Strikes</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
+                {/* Header */}
+                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 70px', gap: 1, mb: 1, px: 1, position: 'sticky', top: 0, bgcolor: 'background.paper', zIndex: 1 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Strike</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>YES</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>NO</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Qty</Typography>
                 </Box>
-              );
-            })}
-          </AccordionDetails>
-        </Accordion>
-      )}
 
-      {/* Bybit strike selection */}
-      {bybitChain && bybitStrikeRows.length > 0 && (
-        <Accordion defaultExpanded elevation={0} sx={{ border: '1px solid rgba(139, 157, 195, 0.15)', '&:before': { display: 'none' } }}>
-          <AccordionSummary expandIcon={<ExpandMore />}>
-            <Typography sx={{ fontWeight: 600, color: '#FF8C00' }}>
-              Bybit Strikes — {bybitChain.expiryLabel}
-            </Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
-              {/* Header */}
-              <Box sx={{
-                display: 'grid', gridTemplateColumns: '1fr 120px 60px 80px 120px 60px 80px',
-                gap: 1, mb: 1, px: 1, position: 'sticky', top: 0, bgcolor: 'background.paper', zIndex: 1,
-              }}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Strike</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Call</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Delta</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Qty</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Put</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Delta</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Qty</Typography>
-              </Box>
+                {polyMarkets.map(market => {
+                  const yesKey = polySelKey(market.id, 'YES');
+                  const noKey = polySelKey(market.id, 'NO');
+                  const yesSelected = polySelections.has(yesKey);
+                  const noSelected = polySelections.has(noKey);
+                  const activeKey = yesSelected ? yesKey : noSelected ? noKey : null;
+                  const qty = activeKey ? (polySelections.get(activeKey) ?? 1) : 1;
 
-              {bybitStrikeRows.map(row => {
-                const callTicker = row.call ? bybitChain.tickers.get(row.call) : null;
-                const putTicker = row.put ? bybitChain.tickers.get(row.put) : null;
-                const isITMCall = spotPrice > row.strike;
-                const isITMPut = spotPrice < row.strike;
-                const callSel = row.call ? bybitSelections.get(row.call) : undefined;
-                const putSel = row.put ? bybitSelections.get(row.put) : undefined;
-
-                return (
-                  <Box key={row.strike} sx={{
-                    display: 'grid', gridTemplateColumns: '1fr 120px 60px 80px 120px 60px 80px',
-                    gap: 1, alignItems: 'center', px: 1, py: 0.5,
-                    borderBottom: '1px solid rgba(139, 157, 195, 0.06)',
-                    bgcolor: (callSel || putSel) ? 'rgba(0, 209, 255, 0.03)' : 'transparent',
-                  }}>
-                    {/* Strike */}
-                    <Typography variant="body2" sx={{
-                      fontWeight: 600, textAlign: 'center',
-                      color: (isITMCall || isITMPut) ? '#FFB020' : 'text.primary',
+                  return (
+                    <Box key={market.id} sx={{
+                      display: 'grid', gridTemplateColumns: '1fr 80px 80px 70px', gap: 1, alignItems: 'center', px: 1, py: 0.5,
+                      borderBottom: '1px solid rgba(139, 157, 195, 0.06)',
+                      bgcolor: (yesSelected || noSelected) ? 'rgba(0, 209, 255, 0.03)' : 'transparent',
+                      '&:hover': { bgcolor: 'rgba(139, 157, 195, 0.04)' },
                     }}>
-                      ${row.strike.toLocaleString()}
-                    </Typography>
+                      <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.8rem' }}>
+                        {market.groupItemTitle || market.question}
+                      </Typography>
 
-                    {/* Call buy/sell */}
-                    {row.call && callTicker ? (
-                      <>
-                        <ToggleButtonGroup
-                          size="small"
-                          exclusive
-                          value={callSel?.side ?? null}
-                          onChange={(_, v) => handleBybitSideToggle(row.call!, v)}
-                          sx={{ justifyContent: 'center' }}
-                        >
-                          <ToggleButton value="buy" sx={{ px: 1, py: 0.25, fontSize: '0.7rem', color: '#22C55E', '&.Mui-selected': { bgcolor: 'rgba(34, 197, 94, 0.15)', color: '#22C55E' } }}>
-                            {callTicker.ask1Price.toFixed(0)}
-                          </ToggleButton>
-                          <ToggleButton value="sell" sx={{ px: 1, py: 0.25, fontSize: '0.7rem', color: '#EF4444', '&.Mui-selected': { bgcolor: 'rgba(239, 68, 68, 0.15)', color: '#EF4444' } }}>
-                            {callTicker.bid1Price.toFixed(0)}
-                          </ToggleButton>
-                        </ToggleButtonGroup>
-                        <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
-                          {callTicker.delta.toFixed(2)}
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                        <Checkbox checked={yesSelected} onChange={() => handlePolyToggle(market.id, 'YES')} size="small" sx={{ '&.Mui-checked': { color: '#22C55E' }, p: 0.5 }} />
+                        <Typography variant="caption" sx={{ color: yesSelected ? '#22C55E' : 'text.secondary', minWidth: 30, textAlign: 'right' }}>
+                          {(market.currentPrice * 100).toFixed(1)}
                         </Typography>
-                        <TextField
-                          type="number"
-                          size="small"
-                          value={callSel ? callSel.quantity : ''}
-                          disabled={!callSel}
-                          onChange={e => {
-                            const v = parseFloat(e.target.value);
-                            if (row.call) handleBybitQtyChange(row.call, isNaN(v) ? 0 : v);
-                          }}
-                          inputProps={{ min: 0.01, step: 0.01, style: { textAlign: 'center', padding: '2px 4px', fontSize: '0.75rem' } }}
-                          sx={{ '& .MuiOutlinedInput-root': { backgroundColor: 'transparent' } }}
-                        />
-                      </>
-                    ) : (
-                      <><Box /><Box /><Box /></>
-                    )}
+                      </Box>
 
-                    {/* Put buy/sell */}
-                    {row.put && putTicker ? (
-                      <>
-                        <ToggleButtonGroup
-                          size="small"
-                          exclusive
-                          value={putSel?.side ?? null}
-                          onChange={(_, v) => handleBybitSideToggle(row.put!, v)}
-                          sx={{ justifyContent: 'center' }}
-                        >
-                          <ToggleButton value="buy" sx={{ px: 1, py: 0.25, fontSize: '0.7rem', color: '#22C55E', '&.Mui-selected': { bgcolor: 'rgba(34, 197, 94, 0.15)', color: '#22C55E' } }}>
-                            {putTicker.ask1Price.toFixed(0)}
-                          </ToggleButton>
-                          <ToggleButton value="sell" sx={{ px: 1, py: 0.25, fontSize: '0.7rem', color: '#EF4444', '&.Mui-selected': { bgcolor: 'rgba(239, 68, 68, 0.15)', color: '#EF4444' } }}>
-                            {putTicker.bid1Price.toFixed(0)}
-                          </ToggleButton>
-                        </ToggleButtonGroup>
-                        <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
-                          {putTicker.delta.toFixed(2)}
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                        <Checkbox checked={noSelected} onChange={() => handlePolyToggle(market.id, 'NO')} size="small" sx={{ '&.Mui-checked': { color: '#EF4444' }, p: 0.5 }} />
+                        <Typography variant="caption" sx={{ color: noSelected ? '#EF4444' : 'text.secondary', minWidth: 30, textAlign: 'right' }}>
+                          {((1 - market.currentPrice) * 100).toFixed(1)}
                         </Typography>
-                        <TextField
-                          type="number"
-                          size="small"
-                          value={putSel ? putSel.quantity : ''}
-                          disabled={!putSel}
-                          onChange={e => {
-                            const v = parseFloat(e.target.value);
-                            if (row.put) handleBybitQtyChange(row.put, isNaN(v) ? 0 : v);
-                          }}
-                          inputProps={{ min: 0.01, step: 0.01, style: { textAlign: 'center', padding: '2px 4px', fontSize: '0.75rem' } }}
-                          sx={{ '& .MuiOutlinedInput-root': { backgroundColor: 'transparent' } }}
-                        />
-                      </>
-                    ) : (
-                      <><Box /><Box /><Box /></>
-                    )}
-                  </Box>
-                );
-              })}
+                      </Box>
+
+                      <TextField
+                        type="number"
+                        size="small"
+                        value={activeKey ? qty : ''}
+                        disabled={!activeKey}
+                        onChange={e => {
+                          const v = parseInt(e.target.value, 10);
+                          if (yesSelected) handlePolyQtyChange(market.id, 'YES', isNaN(v) ? 0 : v);
+                          else if (noSelected) handlePolyQtyChange(market.id, 'NO', isNaN(v) ? 0 : v);
+                        }}
+                        inputProps={{ min: 1, style: { textAlign: 'center', padding: '2px 4px', fontSize: '0.75rem' } }}
+                        sx={{ '& .MuiOutlinedInput-root': { backgroundColor: 'transparent' } }}
+                      />
+                    </Box>
+                  );
+                })}
+              </Box>
+            </AccordionDetails>
+          </Accordion>
+        )}
+
+        {/* Bybit strikes */}
+        {bybitChain && bybitStrikeRows.length > 0 && (
+          <Accordion defaultExpanded elevation={0} sx={{ border: '1px solid rgba(139, 157, 195, 0.15)', '&:before': { display: 'none' } }}>
+            <AccordionSummary expandIcon={<ExpandMore />}>
+              <Typography sx={{ fontWeight: 600, color: '#FF8C00' }}>
+                Bybit Strikes — {bybitChain.expiryLabel}
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
+                {/* Header */}
+                <Box sx={{
+                  display: 'grid', gridTemplateColumns: '1fr 120px 60px 80px 120px 60px 80px',
+                  gap: 1, mb: 1, px: 1, position: 'sticky', top: 0, bgcolor: 'background.paper', zIndex: 1,
+                }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Strike</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Call</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Delta</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Qty</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Put</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Delta</Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textAlign: 'center' }}>Qty</Typography>
+                </Box>
+
+                {bybitStrikeRows.map(row => {
+                  const callTicker = row.call ? bybitChain.tickers.get(row.call) : null;
+                  const putTicker = row.put ? bybitChain.tickers.get(row.put) : null;
+                  const isITMCall = spotPrice > row.strike;
+                  const isITMPut = spotPrice < row.strike;
+                  const callSel = row.call ? bybitSelections.get(row.call) : undefined;
+                  const putSel = row.put ? bybitSelections.get(row.put) : undefined;
+
+                  return (
+                    <Box key={row.strike} sx={{
+                      display: 'grid', gridTemplateColumns: '1fr 120px 60px 80px 120px 60px 80px',
+                      gap: 1, alignItems: 'center', px: 1, py: 0.5,
+                      borderBottom: '1px solid rgba(139, 157, 195, 0.06)',
+                      bgcolor: (callSel || putSel) ? 'rgba(0, 209, 255, 0.03)' : 'transparent',
+                    }}>
+                      {/* Strike */}
+                      <Typography variant="body2" sx={{
+                        fontWeight: 600, textAlign: 'center',
+                        color: (isITMCall || isITMPut) ? '#FFB020' : 'text.primary',
+                      }}>
+                        ${row.strike.toLocaleString()}
+                      </Typography>
+
+                      {/* Call buy/sell */}
+                      {row.call && callTicker ? (
+                        <>
+                          <ToggleButtonGroup
+                            size="small"
+                            exclusive
+                            value={callSel?.side ?? null}
+                            onChange={(_, v) => handleBybitSideToggle(row.call!, v)}
+                            sx={{ justifyContent: 'center' }}
+                          >
+                            <ToggleButton value="buy" sx={{ px: 1, py: 0.25, fontSize: '0.7rem', color: '#22C55E', '&.Mui-selected': { bgcolor: 'rgba(34, 197, 94, 0.15)', color: '#22C55E' } }}>
+                              {callTicker.ask1Price.toFixed(0)}
+                            </ToggleButton>
+                            <ToggleButton value="sell" sx={{ px: 1, py: 0.25, fontSize: '0.7rem', color: '#EF4444', '&.Mui-selected': { bgcolor: 'rgba(239, 68, 68, 0.15)', color: '#EF4444' } }}>
+                              {callTicker.bid1Price.toFixed(0)}
+                            </ToggleButton>
+                          </ToggleButtonGroup>
+                          <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
+                            {callTicker.delta.toFixed(2)}
+                          </Typography>
+                          <TextField
+                            type="number"
+                            size="small"
+                            value={callSel ? callSel.quantity : ''}
+                            disabled={!callSel}
+                            onChange={e => {
+                              const v = parseFloat(e.target.value);
+                              if (row.call) handleBybitQtyChange(row.call, isNaN(v) ? 0 : v);
+                            }}
+                            inputProps={{ min: 0.01, step: 0.01, style: { textAlign: 'center', padding: '2px 4px', fontSize: '0.75rem' } }}
+                            sx={{ '& .MuiOutlinedInput-root': { backgroundColor: 'transparent' } }}
+                          />
+                        </>
+                      ) : (
+                        <><Box /><Box /><Box /></>
+                      )}
+
+                      {/* Put buy/sell */}
+                      {row.put && putTicker ? (
+                        <>
+                          <ToggleButtonGroup
+                            size="small"
+                            exclusive
+                            value={putSel?.side ?? null}
+                            onChange={(_, v) => handleBybitSideToggle(row.put!, v)}
+                            sx={{ justifyContent: 'center' }}
+                          >
+                            <ToggleButton value="buy" sx={{ px: 1, py: 0.25, fontSize: '0.7rem', color: '#22C55E', '&.Mui-selected': { bgcolor: 'rgba(34, 197, 94, 0.15)', color: '#22C55E' } }}>
+                              {putTicker.ask1Price.toFixed(0)}
+                            </ToggleButton>
+                            <ToggleButton value="sell" sx={{ px: 1, py: 0.25, fontSize: '0.7rem', color: '#EF4444', '&.Mui-selected': { bgcolor: 'rgba(239, 68, 68, 0.15)', color: '#EF4444' } }}>
+                              {putTicker.bid1Price.toFixed(0)}
+                            </ToggleButton>
+                          </ToggleButtonGroup>
+                          <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
+                            {putTicker.delta.toFixed(2)}
+                          </Typography>
+                          <TextField
+                            type="number"
+                            size="small"
+                            value={putSel ? putSel.quantity : ''}
+                            disabled={!putSel}
+                            onChange={e => {
+                              const v = parseFloat(e.target.value);
+                              if (row.put) handleBybitQtyChange(row.put, isNaN(v) ? 0 : v);
+                            }}
+                            inputProps={{ min: 0.01, step: 0.01, style: { textAlign: 'center', padding: '2px 4px', fontSize: '0.75rem' } }}
+                            sx={{ '& .MuiOutlinedInput-root': { backgroundColor: 'transparent' } }}
+                          />
+                        </>
+                      ) : (
+                        <><Box /><Box /><Box /></>
+                      )}
+                    </Box>
+                  );
+                })}
+              </Box>
+            </AccordionDetails>
+          </Accordion>
+        )}
+      </Box>
+
+      {/* Position summary (above chart) */}
+      {(polyPositions.length > 0 || bybitPositions.length > 0) && (
+        <Paper elevation={0} sx={{ p: 3, border: '1px solid rgba(139, 157, 195, 0.15)' }}>
+          <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>Positions</Typography>
+
+          {polyPositions.length > 0 && (
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="body2" sx={{ color: '#4A90D9', fontWeight: 600, mb: 1 }}>Polymarket</Typography>
+              {polyPositions.map((pos, i) => (
+                <Typography key={i} variant="body2" color="text.secondary" sx={{ pl: 2 }}>
+                  {pos.groupItemTitle} — {pos.side} x{pos.quantity} @ {pos.entryPrice.toFixed(4)}
+                </Typography>
+              ))}
             </Box>
-          </AccordionDetails>
-        </Accordion>
+          )}
+
+          {bybitPositions.length > 0 && (
+            <Box>
+              <Typography variant="body2" sx={{ color: '#FF8C00', fontWeight: 600, mb: 1 }}>Bybit</Typography>
+              {bybitPositions.map((pos, i) => (
+                <Typography key={i} variant="body2" color="text.secondary" sx={{ pl: 2 }}>
+                  {pos.symbol} — {pos.side} x{pos.quantity} @ ${pos.entryPrice.toFixed(2)} (fee: ${pos.entryFee.toFixed(2)})
+                </Typography>
+              ))}
+            </Box>
+          )}
+
+          <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid rgba(139, 157, 195, 0.15)', display: 'flex', gap: 3, justifyContent: 'center' }}>
+            <Typography variant="body2" color="text.secondary">
+              Total positions: {polyPositions.length + bybitPositions.length}
+            </Typography>
+            <Typography variant="body2" sx={{ color: '#00D1FF', fontWeight: 600 }}>
+              Net entry cost: ${totalEntryCost.toFixed(2)}
+            </Typography>
+            {totalFees > 0 && (
+              <Typography variant="body2" sx={{ color: '#8B9DC3' }}>
+                Fees: ${totalFees.toFixed(2)}
+              </Typography>
+            )}
+          </Box>
+        </Paper>
       )}
 
       {/* Chart */}
@@ -591,44 +645,6 @@ export function ChartScreen({
               '& .MuiSlider-rail': { bgcolor: 'rgba(139, 157, 195, 0.2)' },
             }}
           />
-        </Paper>
-      )}
-
-      {/* Position summary */}
-      {(polyPositions.length > 0 || bybitPositions.length > 0) && (
-        <Paper elevation={0} sx={{ p: 3, border: '1px solid rgba(139, 157, 195, 0.15)' }}>
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>Positions</Typography>
-
-          {polyPositions.length > 0 && (
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="body2" sx={{ color: '#4A90D9', fontWeight: 600, mb: 1 }}>Polymarket</Typography>
-              {polyPositions.map((pos, i) => (
-                <Typography key={i} variant="body2" color="text.secondary" sx={{ pl: 2 }}>
-                  {pos.groupItemTitle} — {pos.side} x{pos.quantity} @ {pos.entryPrice.toFixed(4)}
-                </Typography>
-              ))}
-            </Box>
-          )}
-
-          {bybitPositions.length > 0 && (
-            <Box>
-              <Typography variant="body2" sx={{ color: '#FF8C00', fontWeight: 600, mb: 1 }}>Bybit</Typography>
-              {bybitPositions.map((pos, i) => (
-                <Typography key={i} variant="body2" color="text.secondary" sx={{ pl: 2 }}>
-                  {pos.symbol} — {pos.side} x{pos.quantity} @ ${pos.entryPrice.toFixed(2)}
-                </Typography>
-              ))}
-            </Box>
-          )}
-
-          <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid rgba(139, 157, 195, 0.15)', display: 'flex', gap: 3, justifyContent: 'center' }}>
-            <Typography variant="body2" color="text.secondary">
-              Total positions: {polyPositions.length + bybitPositions.length}
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#00D1FF', fontWeight: 600 }}>
-              Net entry cost: ${totalEntryCost.toFixed(2)}
-            </Typography>
-          </Box>
         </Paper>
       )}
     </Box>

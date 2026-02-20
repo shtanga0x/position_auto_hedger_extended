@@ -298,6 +298,11 @@ export function computeExpiryPnl(
   return points;
 }
 
+/** Bybit trading fee: min(0.03% × IndexPrice, 7% × OptionPrice) × Size */
+export function bybitTradingFee(indexPrice: number, optionPrice: number, quantity: number): number {
+  return Math.min(0.0003 * indexPrice, 0.07 * optionPrice) * quantity;
+}
+
 // --- Black-Scholes vanilla option pricing ---
 
 /**
@@ -398,12 +403,12 @@ export function computeCombinedPnlCurve(
       totalPnl += (projectedValue - pos.entryPrice) * pos.quantity;
     }
 
-    // Bybit positions
+    // Bybit positions (subtract entry fee)
     for (const pos of bybitPositions) {
       const tau = bybitTaus.get(pos.symbol) ?? 0;
       const currentValue = bsPrice(cryptoPrice, pos.strike, pos.markIv, tau, pos.optionsType);
       const sideMultiplier = pos.side === 'buy' ? 1 : -1;
-      totalPnl += (currentValue - pos.entryPrice) * sideMultiplier * pos.quantity;
+      totalPnl += (currentValue - pos.entryPrice) * sideMultiplier * pos.quantity - pos.entryFee;
     }
 
     points.push({ cryptoPrice, pnl: totalPnl });
