@@ -368,38 +368,22 @@ export function computeBybitPnlCurve(
 }
 
 /**
- * Build an adaptive price grid that concentrates points near strike prices.
- * Uses uniform base grid + extra points within ±5% of each strike.
+ * Build a uniform price grid. Simple and artifact-free with linear interpolation.
  */
-export function buildAdaptiveGrid(
+export function buildPriceGrid(
   lower: number,
   upper: number,
-  strikes: number[],
-  numPoints: number = 200,
+  numPoints: number = 500,
 ): number[] {
   const range = upper - lower;
   if (range <= 0 || numPoints < 2) return [];
 
-  // Start with uniform grid
-  const baseStep = range / (numPoints - 1);
-  const priceSet = new Set<number>();
+  const step = range / (numPoints - 1);
+  const grid: number[] = [];
   for (let i = 0; i < numPoints; i++) {
-    priceSet.add(lower + baseStep * i);
+    grid.push(lower + step * i);
   }
-
-  // Add extra points near each strike (±5% of range, with 4x density)
-  const zoneRadius = range * 0.05;
-  const fineStep = baseStep / 4;
-  for (const K of strikes) {
-    const zoneStart = Math.max(lower, K - zoneRadius);
-    const zoneEnd = Math.min(upper, K + zoneRadius);
-    for (let p = zoneStart; p <= zoneEnd; p += fineStep) {
-      priceSet.add(p);
-    }
-    priceSet.add(K); // ensure strike itself is included
-  }
-
-  return Array.from(priceSet).sort((a, b) => a - b);
+  return grid;
 }
 
 /**
@@ -417,16 +401,12 @@ export function computeCombinedPnlCurve(
   optionType: OptionType,
   H: number,
   smile: SmilePoint[] | undefined,
-  numPoints: number = 200,
+  numPoints: number = 500,
   prebuiltGrid?: number[],
 ): ProjectionPoint[] {
   if (polyPositions.length === 0 && bybitPositions.length === 0) return [];
 
-  const grid = prebuiltGrid ?? buildAdaptiveGrid(
-    lowerPrice, upperPrice,
-    [...polyPositions.map(p => p.strikePrice), ...bybitPositions.map(p => p.strike)],
-    numPoints,
-  );
+  const grid = prebuiltGrid ?? buildPriceGrid(lowerPrice, upperPrice, numPoints);
   if (grid.length === 0) return [];
   const points: ProjectionPoint[] = [];
 

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { OptionType, ProjectionPoint, PolymarketPosition, BybitPosition } from '../types';
 import {
   computeCombinedPnlCurve,
-  buildAdaptiveGrid,
+  buildPriceGrid,
   bsPrice,
   priceOptionYes,
   interpolateSmile,
@@ -19,7 +19,7 @@ interface PortfolioCurvesInput {
   optionType: OptionType;
   H: number;
   smile?: SmilePoint[];
-  numPoints?: number;
+  numPoints?: number; // default 500
 }
 
 interface PortfolioCurvesOutput {
@@ -158,7 +158,7 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     optionType,
     H,
     smile,
-    numPoints = 200,
+    numPoints = 500,
   } = input;
 
   return useMemo(() => {
@@ -181,12 +181,8 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     // Compute time snapshots based on actual expiry dates
     const snapshots = computeSnapshots(polyPositions, bybitPositions, nowSec, polyExpiryTs);
 
-    // Build shared adaptive grid with all strikes
-    const allStrikes = [
-      ...polyPositions.map(p => p.strikePrice),
-      ...bybitPositions.map(p => p.strike),
-    ];
-    const grid = buildAdaptiveGrid(lowerPrice, upperPrice, allStrikes, numPoints);
+    // Build shared uniform grid (500 points for smooth linear interpolation)
+    const grid = buildPriceGrid(lowerPrice, upperPrice, numPoints);
 
     // Compute combined curve at each snapshot
     const combinedCurves: ProjectionPoint[][] = snapshots.map(snap => {
