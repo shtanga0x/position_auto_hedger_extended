@@ -663,6 +663,9 @@ export function ChartScreen({
           />
         </Paper>
       )}
+      <Typography variant="caption" sx={{ textAlign: 'center', color: 'rgba(139, 157, 195, 0.4)', pb: 1 }}>
+        v{__APP_VERSION__}
+      </Typography>
     </Box>
   );
 }

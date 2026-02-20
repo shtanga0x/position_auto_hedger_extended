@@ -84,6 +84,9 @@ export function SetupScreen({
           </Typography>
         )}
       </Box>
+      <Typography variant="caption" sx={{ textAlign: 'center', color: 'rgba(139, 157, 195, 0.4)', pb: 2, position: 'relative', zIndex: 1 }}>
+        v{__APP_VERSION__}
+      </Typography>
     </Box>
   );
 }

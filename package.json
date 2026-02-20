@@ -1,7 +1,7 @@
 {
   "name": "grapher-v3",
   "private": true,
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Polymarket + Bybit options projection tool — visualize combined portfolio P&L across crypto price ranges",
   "type": "module",
   "scripts": {
