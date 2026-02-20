@@ -59,19 +59,6 @@ function formatPct(value: number): string {
   return `${sign}${value.toFixed(1)}%`;
 }
 
-/** Linear interpolation of PnL at a given spot price */
-function interpolatePnlAtSpot(curve: ProjectionPoint[], spot: number): number {
-  if (!curve || curve.length === 0) return 0;
-  if (spot <= curve[0].cryptoPrice) return curve[0].pnl;
-  if (spot >= curve[curve.length - 1].cryptoPrice) return curve[curve.length - 1].pnl;
-  for (let i = 0; i < curve.length - 1; i++) {
-    if (spot <= curve[i + 1].cryptoPrice) {
-      const t = (spot - curve[i].cryptoPrice) / (curve[i + 1].cryptoPrice - curve[i].cryptoPrice);
-      return curve[i].pnl + t * (curve[i + 1].pnl - curve[i].pnl);
-    }
-  }
-  return curve[curve.length - 1].pnl;
-}
 
 function CustomXTick(props: {
   x: number;
@@ -90,7 +77,7 @@ function CustomXTick(props: {
     return (
       <g transform={`translate(${x},${y})`}>
         <line y1={0} y2={8} stroke={tickColor} strokeWidth={1} />
-        <text y={22} textAnchor="middle" fill={tickColor} fontSize={12} fontFamily="JetBrains Mono, monospace">
+        <text y={22} textAnchor="middle" fill={tickColor} fontSize={13} fontFamily="JetBrains Mono, monospace">
           ${value.toLocaleString()}
         </text>
       </g>
@@ -152,6 +139,7 @@ function CustomTooltipContent({
   hasPolyOverlay,
   hasBybitOverlay,
   lineStyles,
+  totalEntryCost,
 }: {
   active?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -167,6 +155,7 @@ function CustomTooltipContent({
   hasPolyOverlay: boolean;
   hasBybitOverlay: boolean;
   lineStyles: Map<string, LineStyle>;
+  totalEntryCost?: number;
 }) {
   if (!active || !payload || payload.length === 0) return null;
 
@@ -185,12 +174,24 @@ function CustomTooltipContent({
     }
   }
 
-  const renderRow = (label: string, pnl: number, textColor: string, style: LineStyle | undefined, pnlColor?: string) => {
+  const absCost = Math.abs(totalEntryCost ?? 0);
+
+  // Compute % change relative to a reference PnL
+  function pctSuffix(pnl: number, refKey: string): string {
+    if (absCost <= 0) return '';
+    const ref = valueMap.get(refKey);
+    if (ref == null) return '';
+    const pct = ((pnl - ref) / absCost) * 100;
+    const sign = pct >= 0 ? '+' : '';
+    return ` (${sign}${pct.toFixed(1)}%)`;
+  }
+
+  const renderRow = (label: string, pnl: number, textColor: string, style: LineStyle | undefined, pnlColor?: string, suffix?: string) => {
     const pnlSign = pnl >= 0 ? '+' : '';
     return (
-      <div key={label} style={{ display: 'flex', alignItems: 'center', fontSize: 13, padding: '2px 0' }}>
+      <div key={label} style={{ display: 'flex', alignItems: 'center', fontSize: 14, padding: '2px 0' }}>
         {style && <TooltipLineSample style={style} pnlColor={pnlColor} />}
-        <span style={{ color: textColor }}>{label}: {pnlSign}{pnl.toFixed(2)}</span>
+        <span style={{ color: textColor }}>{label}: {pnlSign}{pnl.toFixed(2)}{suffix ?? ''}</span>
       </div>
     );
   };
@@ -201,38 +202,41 @@ function CustomTooltipContent({
       border: `1px solid ${tooltipBorder}`,
       borderRadius: 8,
       padding: '10px 14px',
-      maxWidth: 360,
+      maxWidth: 380,
     }}>
-      <div style={{ color: secondaryColor, marginBottom: 6, fontSize: 14 }}>
+      <div style={{ color: secondaryColor, marginBottom: 6, fontSize: 15 }}>
         {cryptoSymbol}: ${cryptoPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({formatPct(pricePct)})
       </div>
 
-      {/* Combined curves */}
-      {combinedLabels.map((label) => {
+      {/* Combined curves — idx 0 is "Now" (no %), rest show delta vs Now */}
+      {combinedLabels.map((label, idx) => {
         if (hiddenLines.has(label)) return null;
         const pnl = valueMap.get(label);
         if (pnl == null) return null;
         const color = pnl >= 0 ? GREEN : RED;
-        return renderRow(label, pnl, color, lineStyles.get(label), color);
+        const suffix = idx === 0 ? undefined : pctSuffix(pnl, combinedLabels[0]);
+        return renderRow(label, pnl, color, lineStyles.get(label), color, suffix);
       })}
 
-      {/* Poly overlay */}
+      {/* Poly overlay — Poly Now has no %, Poly Expiry shows delta vs Poly Now */}
       {hasPolyOverlay && (
         <>
           {!hiddenLines.has(POLY_NOW) && valueMap.has(POLY_NOW) &&
             renderRow(POLY_NOW, valueMap.get(POLY_NOW)!, POLY_BLUE, lineStyles.get(POLY_NOW))}
           {!hiddenLines.has(POLY_EXPIRY) && valueMap.has(POLY_EXPIRY) &&
-            renderRow(POLY_EXPIRY, valueMap.get(POLY_EXPIRY)!, POLY_BLUE, lineStyles.get(POLY_EXPIRY))}
+            renderRow(POLY_EXPIRY, valueMap.get(POLY_EXPIRY)!, POLY_BLUE, lineStyles.get(POLY_EXPIRY), undefined,
+              pctSuffix(valueMap.get(POLY_EXPIRY)!, POLY_NOW))}
         </>
       )}
 
-      {/* Bybit overlay */}
+      {/* Bybit overlay — Bybit Now has no %, Bybit Expiry shows delta vs Bybit Now */}
       {hasBybitOverlay && (
         <>
           {!hiddenLines.has(BYBIT_NOW) && valueMap.has(BYBIT_NOW) &&
             renderRow(BYBIT_NOW, valueMap.get(BYBIT_NOW)!, BYBIT_ORANGE, lineStyles.get(BYBIT_NOW))}
           {!hiddenLines.has(BYBIT_EXPIRY) && valueMap.has(BYBIT_EXPIRY) &&
-            renderRow(BYBIT_EXPIRY, valueMap.get(BYBIT_EXPIRY)!, BYBIT_ORANGE, lineStyles.get(BYBIT_EXPIRY))}
+            renderRow(BYBIT_EXPIRY, valueMap.get(BYBIT_EXPIRY)!, BYBIT_ORANGE, lineStyles.get(BYBIT_EXPIRY), undefined,
+              pctSuffix(valueMap.get(BYBIT_EXPIRY)!, BYBIT_NOW))}
         </>
       )}
     </div>
@@ -380,18 +384,6 @@ export function ProjectionChart({
     });
   }, []);
 
-  // PnL at current spot for each curve — used to compute legend % labels
-  const spotPnls = useMemo(() => {
-    const m = new Map<string, number>();
-    for (let i = 0; i < combinedCurves.length; i++) {
-      m.set(combinedLabels[i], interpolatePnlAtSpot(combinedCurves[i], currentCryptoPrice));
-    }
-    if (polyNowCurve) m.set(POLY_NOW, interpolatePnlAtSpot(polyNowCurve, currentCryptoPrice));
-    if (polyExpiryCurve) m.set(POLY_EXPIRY, interpolatePnlAtSpot(polyExpiryCurve, currentCryptoPrice));
-    if (bybitNowCurve) m.set(BYBIT_NOW, interpolatePnlAtSpot(bybitNowCurve, currentCryptoPrice));
-    if (bybitExpiryCurve) m.set(BYBIT_EXPIRY, interpolatePnlAtSpot(bybitExpiryCurve, currentCryptoPrice));
-    return m;
-  }, [combinedCurves, combinedLabels, currentCryptoPrice, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve]);
 
   const renderTick = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -437,63 +429,32 @@ export function ProjectionChart({
         hasPolyOverlay={hasPolyOverlay}
         hasBybitOverlay={hasBybitOverlay}
         lineStyles={lineStyles}
+        totalEntryCost={totalEntryCost}
       />
     ),
-    [combinedLabels, cryptoSymbol, hiddenLines, currentCryptoPrice, tooltipBg, tooltipBorder, axisColor, hasPolyOverlay, hasBybitOverlay, lineStyles]
+    [combinedLabels, cryptoSymbol, hiddenLines, currentCryptoPrice, tooltipBg, tooltipBorder, axisColor, hasPolyOverlay, hasBybitOverlay, lineStyles, totalEntryCost]
   );
 
   if (chartData.length === 0) return null;
 
-  // Compute legend % suffix: shows P&L at spot relative to the reference curve
-  const absCost = Math.abs(totalEntryCost ?? 0);
-  function legendPctSuffix(label: string, combinedIndex: number): string {
-    if (absCost <= 0) return '';
-    const pnl = spotPnls.get(label);
-    if (pnl == null) return '';
-    let pct: number;
-    if (label === POLY_EXPIRY) {
-      const ref = spotPnls.get(POLY_NOW) ?? 0;
-      pct = ((pnl - ref) / absCost) * 100;
-    } else if (label === BYBIT_EXPIRY) {
-      const ref = spotPnls.get(BYBIT_NOW) ?? 0;
-      pct = ((pnl - ref) / absCost) * 100;
-    } else if (combinedIndex === 0) {
-      // "Now" — show absolute P&L%
-      pct = (pnl / absCost) * 100;
-    } else {
-      // Other combined snapshots — relative to combined[0] (Now)
-      const ref = spotPnls.get(combinedLabels[0]) ?? 0;
-      pct = ((pnl - ref) / absCost) * 100;
-    }
-    const sign = pct >= 0 ? '+' : '';
-    return ` (${sign}${pct.toFixed(1)}%)`;
-  }
+  // Build legend items (no % — % shown in tooltip instead)
+  const legendItems: Array<{ label: string; color: string; secondColor?: string; dash?: string; width: number }> = [];
 
-  // Build legend items
-  const legendItems: Array<{ label: string; displayLabel: string; color: string; secondColor?: string; dash?: string; width: number }> = [];
-
-  // Combined curves
   for (let i = 0; i < combinedLabels.length; i++) {
     legendItems.push({
       label: combinedLabels[i],
-      displayLabel: combinedLabels[i] + legendPctSuffix(combinedLabels[i], i),
-      color: GREEN,
-      secondColor: RED,
+      color: GREEN, secondColor: RED,
       dash: COMBINED_DASH[i] || undefined,
       width: COMBINED_WIDTHS[i],
     });
   }
-
-  // Poly overlay
   if (hasPolyOverlay) {
-    legendItems.push({ label: POLY_NOW, displayLabel: POLY_NOW + legendPctSuffix(POLY_NOW, -1), color: POLY_BLUE, width: 2 });
-    legendItems.push({ label: POLY_EXPIRY, displayLabel: POLY_EXPIRY + legendPctSuffix(POLY_EXPIRY, -1), color: POLY_BLUE, dash: '14 6', width: 2 });
+    legendItems.push({ label: POLY_NOW, color: POLY_BLUE, width: 2 });
+    legendItems.push({ label: POLY_EXPIRY, color: POLY_BLUE, dash: '14 6', width: 2 });
   }
-
-  // Bybit overlay
   if (hasBybitOverlay) {
-    legendItems.push({ label: BYBIT_NOW, displayLabel: BYBIT_NOW + legendPctSuffix(BYBIT_NOW, -1), color: BYBIT_ORANGE, width: 2 });
-    legendItems.push({ label: BYBIT_EXPIRY, displayLabel: BYBIT_EXPIRY + legendPctSuffix(BYBIT_EXPIRY, -1), color: BYBIT_ORANGE, dash: '14 6', width: 2 });
+    legendItems.push({ label: BYBIT_NOW, color: BYBIT_ORANGE, width: 2 });
+    legendItems.push({ label: BYBIT_EXPIRY, color: BYBIT_ORANGE, dash: '14 6', width: 2 });
   }
 
   return (
@@ -518,8 +479,8 @@ export function ProjectionChart({
             ticks={yTicks}
             tickFormatter={formatYAxisPnl}
             stroke={axisColor}
-            fontSize={13}
-            label={{ value: 'P&L ($)', angle: -90, position: 'insideLeft', style: { fill: axisColor, fontSize: 14 } }}
+            fontSize={14}
+            label={{ value: 'P&L ($)', angle: -90, position: 'insideLeft', style: { fill: axisColor, fontSize: 15 } }}
           />
           <YAxis
             yAxisId="right"
@@ -528,8 +489,8 @@ export function ProjectionChart({
             ticks={yTicks}
             tickFormatter={formatYAxisPnl}
             stroke={axisColor}
-            fontSize={13}
-            label={{ value: 'P&L', angle: 90, position: 'insideRight', style: { fill: axisColor, fontSize: 14 } }}
+            fontSize={14}
+            label={{ value: 'P&L', angle: 90, position: 'insideRight', style: { fill: axisColor, fontSize: 15 } }}
           />
           <Tooltip content={renderTooltip} />
           <ReferenceLine yAxisId="left" y={0} stroke={zeroLineColor} strokeDasharray="3 3" />
@@ -538,7 +499,7 @@ export function ProjectionChart({
             x={currentCryptoPrice}
             stroke={refLineColor}
             strokeDasharray="5 5"
-            label={{ value: `Spot: $${currentCryptoPrice.toLocaleString()}`, position: 'top', fill: axisColor, fontSize: 13 }}
+            label={{ value: `Spot: $${currentCryptoPrice.toLocaleString()}`, position: 'top', fill: axisColor, fontSize: 14 }}
           />
 
           {/* Invisible line for right Y-axis scale */}
@@ -655,7 +616,7 @@ export function ProjectionChart({
                   stroke={item.color} strokeWidth={item.width} strokeDasharray={item.dash} />
               )}
             </svg>
-            <span style={{ color: legendColor, fontSize: 13 }}>{item.displayLabel}</span>
+            <span style={{ color: legendColor, fontSize: 14 }}>{item.label}</span>
           </div>
         ))}
       </div>
