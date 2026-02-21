@@ -332,26 +332,6 @@ export function OptimizationScreen({
     return points.sort((a, b) => a.moneyness - b.moneyness);
   }, [bybitChain, spotPrice]);
 
-  // Best % P&L per column across all strikes (for header badge)
-  const bestPct = useMemo(() => {
-    let p5 = -Infinity, p10 = -Infinity, p20 = -Infinity;
-    for (const r of optResults) {
-      const pct = (match: OptMatchResult | null, pnl: number) => {
-        if (!match) return -Infinity;
-        const cost = match.polyQty * match.noAskPrice + match.bybitAsk * bybitQty + match.bybitFee;
-        return cost > 0 ? (pnl / cost) * 100 : -Infinity;
-      };
-      if (r.best5)  p5  = Math.max(p5,  pct(r.best5,  r.best5.avgPnl5));
-      if (r.best10) p10 = Math.max(p10, pct(r.best10, r.best10.avgPnl10));
-      if (r.best20) p20 = Math.max(p20, pct(r.best20, r.best20.avgPnl20));
-    }
-    return {
-      p5:  isFinite(p5)  ? p5  : null,
-      p10: isFinite(p10) ? p10 : null,
-      p20: isFinite(p20) ? p20 : null,
-    };
-  }, [optResults, bybitQty]);
-
   const handleViz = useCallback((strikeResult: StrikeOptResult, match: OptMatchResult, range: '5' | '10' | '20') => {
     setVizSelection(prev =>
       (prev?.match === match && prev?.range === range) ? null : { strikeResult, match, range }
@@ -399,21 +379,26 @@ export function OptimizationScreen({
           <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#4A90D9', mt: 0.5 }}>
             Poly: NO ×{polyQty.toFixed(2)} @ {noAskPrice.toFixed(4)} (${(noAskPrice * polyQty).toFixed(2)})
           </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.75 }}>
-            <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600, fontSize: '0.78rem' }}>
-              Avg ±{range}%: +${avgPnl.toFixed(2)} (+{pct.toFixed(1)}%)
+          <Box sx={{ mt: 0.75 }}>
+            <Typography variant="body2" sx={{ color: '#22C55E', fontSize: '0.72rem' }}>
+              Avg ±{range}%: +${avgPnl.toFixed(2)}
             </Typography>
-            <IconButton
-              size="small"
-              onClick={() => handleViz(strikeResult, match, range)}
-              sx={{
-                ml: 'auto', p: 0.5,
-                color: isSelected ? '#00D1FF' : 'text.secondary',
-                '&:hover': { color: '#00D1FF' },
-              }}
-            >
-              <BarChart fontSize="small" />
-            </IconButton>
+            <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.25 }}>
+              <Typography sx={{ color: '#22C55E', fontWeight: 700, fontSize: '0.9rem', fontFamily: 'monospace' }}>
+                +{pct.toFixed(1)}%
+              </Typography>
+              <IconButton
+                size="small"
+                onClick={() => handleViz(strikeResult, match, range)}
+                sx={{
+                  ml: 'auto', p: 0.5,
+                  color: isSelected ? '#00D1FF' : 'text.secondary',
+                  '&:hover': { color: '#00D1FF' },
+                }}
+              >
+                <BarChart fontSize="small" />
+              </IconButton>
+            </Box>
           </Box>
         </Box>
       </TableCell>
@@ -421,20 +406,6 @@ export function OptimizationScreen({
   };
 
   const isLoading = polyMarkets.length > 0 && bybitChain !== null && optResults.length === 0;
-
-  // Badge component shown in column header
-  const PctBadge = ({ pct }: { pct: number | null }) =>
-    pct !== null ? (
-      <Box sx={{
-        position: 'absolute', top: '50%', right: 6,
-        transform: 'translateY(-50%)',
-        fontSize: '0.88rem', fontWeight: 800, color: '#22C55E',
-        fontFamily: '"Roboto Mono", monospace',
-        lineHeight: 1,
-      }}>
-        +{pct.toFixed(1)}%
-      </Box>
-    ) : null;
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', p: 2, gap: 1.5 }}>
@@ -515,18 +486,9 @@ export function OptimizationScreen({
             <TableHead>
               <TableRow sx={{ bgcolor: isDark ? 'rgba(19, 26, 42, 0.5)' : 'rgba(0,0,0,0.03)' }}>
                 <TableCell sx={{ fontWeight: 700, width: '25%', color: '#4A90D9' }}>Poly Strike</TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E', position: 'relative' }}>
-                  Best ±5%
-                  <PctBadge pct={bestPct.p5} />
-                </TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E', position: 'relative' }}>
-                  Best ±10%
-                  <PctBadge pct={bestPct.p10} />
-                </TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E', position: 'relative' }}>
-                  Best ±20%
-                  <PctBadge pct={bestPct.p20} />
-                </TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±5%</TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±10%</TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±20%</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
