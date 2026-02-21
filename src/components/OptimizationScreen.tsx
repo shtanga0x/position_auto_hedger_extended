@@ -72,20 +72,25 @@ function VizCard({
   const { polyQty, noAskPrice, bybitAsk, bybitFee, instrument, ticker } = match;
   const isDark = useTheme().palette.mode === 'dark';
 
-  // Step size based on asset price magnitude
-  const priceStep = spotPrice > 10000 ? 500 : spotPrice > 1000 ? 50 : 5;
-
   // Wide slider bounds covering all three prices with ample padding
   const sliderBounds = useMemo((): [number, number] => {
     const prices = [market.strikePrice, instrument.strike, spotPrice];
     const minP = Math.min(...prices);
     const maxP = Math.max(...prices);
     const pad = Math.max((maxP - minP) * 0.50, spotPrice * 0.30);
-    return [
-      Math.floor((minP - pad) / priceStep) * priceStep,
-      Math.ceil((maxP + pad) / priceStep) * priceStep,
-    ];
-  }, [market.strikePrice, instrument.strike, spotPrice, priceStep]);
+    const lo = Math.max(0, minP - pad);
+    const hi = maxP + pad;
+    return [Math.floor(lo / 100) * 100, Math.ceil(hi / 100) * 100];
+  }, [market.strikePrice, instrument.strike, spotPrice]);
+
+  // Step size based on total slider range (same logic as v3)
+  const sliderStep = useMemo(() => {
+    const range = sliderBounds[1] - sliderBounds[0];
+    if (range > 100000) return 1000;
+    if (range > 10000) return 100;
+    if (range > 1000) return 10;
+    return 1;
+  }, [sliderBounds]);
 
   // Initial chart price range covers all three prices with ±20% padding
   const [priceRange, setPriceRange] = useState<[number, number]>(() => {
@@ -94,8 +99,8 @@ function VizCard({
     const maxP = Math.max(...prices);
     const pad = Math.max((maxP - minP) * 0.20, spotPrice * 0.12);
     return [
-      Math.floor((minP - pad) / priceStep) * priceStep,
-      Math.ceil((maxP + pad) / priceStep) * priceStep,
+      Math.floor((minP - pad) / 100) * 100,
+      Math.ceil((maxP + pad) / 100) * 100,
     ];
   });
 
@@ -203,29 +208,46 @@ function VizCard({
 
       {/* Price range slider */}
       <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px' }}>
-        <Typography variant="caption" sx={{ color: 'rgba(139, 157, 195, 0.7)', display: 'block', mb: 1.5 }}>
-          Price range: ${priceRange[0].toLocaleString()} — ${priceRange[1].toLocaleString()}
-        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+          <Typography variant="body2" color="text.secondary">${priceRange[0].toLocaleString()}</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+            {cryptoSymbol} Price Range
+          </Typography>
+          <Typography variant="body2" color="text.secondary">${priceRange[1].toLocaleString()}</Typography>
+        </Box>
         <Slider
           value={priceRange}
           onChange={(_, v) => setPriceRange(v as [number, number])}
           min={sliderBounds[0]}
           max={sliderBounds[1]}
-          step={priceStep}
+          step={sliderStep}
           valueLabelDisplay="auto"
           valueLabelFormat={(v) => `$${(v as number).toLocaleString()}`}
-          sx={{ color: '#4A90D9' }}
+          sx={{
+            color: '#00D1FF',
+            '& .MuiSlider-thumb': { bgcolor: '#00D1FF', '&:hover': { boxShadow: '0 0 8px rgba(0, 209, 255, 0.4)' } },
+            '& .MuiSlider-track': { bgcolor: '#00D1FF' },
+            '& .MuiSlider-rail': { bgcolor: 'rgba(139, 157, 195, 0.2)' },
+          }}
         />
       </Paper>
 
       {/* H exponent offset slider */}
       <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px' }}>
-        <Typography variant="caption" sx={{ color: 'rgba(139, 157, 195, 0.7)', display: 'block', mb: 1.5 }}>
-          {'ΔH offset: '}{hDelta >= 0 ? '+' : ''}{hDelta.toFixed(2)}
-          {' · >7d: H='}{autoH(10 / 365.25, hDelta).toFixed(2)}
-          {' | 3–7d: H='}{autoH(5 / 365.25, hDelta).toFixed(2)}
-          {' | <3d: H='}{autoH(1 / 365.25, hDelta).toFixed(2)}
-        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1 }}>
+          <Typography variant="body2" color="text.secondary">−0.20</Typography>
+          <Box sx={{ textAlign: 'center' }}>
+            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+              H offset: {hDelta >= 0 ? '+' : ''}{hDelta.toFixed(2)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {'>'}{'>'}7d: H={autoH(10 / 365.25, hDelta).toFixed(2)} &nbsp;|&nbsp;
+              3–7d: H={autoH(5 / 365.25, hDelta).toFixed(2)} &nbsp;|&nbsp;
+              {'<'}3d: H={autoH(1 / 365.25, hDelta).toFixed(2)}
+            </Typography>
+          </Box>
+          <Typography variant="body2" color="text.secondary">+0.20</Typography>
+        </Box>
         <Slider
           value={hDelta}
           onChange={(_, v) => setHDelta(v as number)}
@@ -234,7 +256,12 @@ function VizCard({
           step={0.01}
           valueLabelDisplay="auto"
           valueLabelFormat={(v) => (v >= 0 ? '+' : '') + (v as number).toFixed(2)}
-          sx={{ color: '#A78BFA' }}
+          sx={{
+            color: '#A78BFA',
+            '& .MuiSlider-thumb': { bgcolor: '#A78BFA', '&:hover': { boxShadow: '0 0 8px rgba(167, 139, 250, 0.4)' } },
+            '& .MuiSlider-track': { bgcolor: '#A78BFA' },
+            '& .MuiSlider-rail': { bgcolor: 'rgba(139, 157, 195, 0.2)' },
+          }}
         />
       </Paper>
     </Box>
