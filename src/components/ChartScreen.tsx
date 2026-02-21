@@ -98,6 +98,7 @@ export function ChartScreen({
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 0]);
   const [sliderBounds, setSliderBounds] = useState<[number, number]>([0, 0]);
   const [hExponent, setHExponent] = useState(0.65);
+  const [polyPriceMode, setPolyPriceMode] = useState<'bid' | 'mid' | 'ask'>('mid');
 
   // --- Poly position state ---
   const [polySelections, setPolySelections] = useState<Map<string, number>>(new Map());
@@ -137,8 +138,20 @@ export function ChartScreen({
       if (!market || market.strikePrice <= 0) continue;
 
       const isUpBarrier = market.strikePrice > spotPrice;
+      // IV always calibrated from mid price (market consensus)
       const iv = solveImpliedVol(spotPrice, market.strikePrice, tauNow, market.currentPrice, optionType, isUpBarrier, 0.5);
-      const entryPrice = sideStr === 'YES' ? market.currentPrice : (1 - market.currentPrice);
+
+      // Entry price based on selected price mode
+      // YES side: ask=bestAsk, mid=currentPrice, bid=bestBid
+      // NO side:  ask=1-bestBid (buy NO at market), mid=1-currentPrice, bid=1-bestAsk (limit)
+      let entryPrice: number;
+      if (polyPriceMode === 'ask' && market.bestAsk != null && market.bestBid != null) {
+        entryPrice = sideStr === 'YES' ? market.bestAsk : (1 - market.bestBid);
+      } else if (polyPriceMode === 'bid' && market.bestBid != null && market.bestAsk != null) {
+        entryPrice = sideStr === 'YES' ? market.bestBid : (1 - market.bestAsk);
+      } else {
+        entryPrice = sideStr === 'YES' ? market.currentPrice : (1 - market.currentPrice);
+      }
 
       result.push({
         marketId: market.id,
@@ -153,7 +166,7 @@ export function ChartScreen({
       });
     }
     return result;
-  }, [polyMarkets, polySelections, spotPrice, polyEvent, optionType]);
+  }, [polyMarkets, polySelections, spotPrice, polyEvent, optionType, polyPriceMode]);
 
   // --- Bybit position state ---
   const [bybitSelections, setBybitSelections] = useState<Map<string, BybitSelectedOption>>(new Map());
@@ -355,9 +368,23 @@ export function ChartScreen({
         {polyMarkets.length > 0 && (
           <Accordion disableGutters defaultExpanded elevation={0} sx={{ border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px !important', overflow: 'hidden', '&:before': { display: 'none' } }}>
             <AccordionSummary expandIcon={<ExpandMore />}>
-              <Typography sx={{ fontWeight: 600, color: '#4A90D9' }}>
-                Polymarket Strikes {polyEvent ? `(${formatExpiryUTC1(polyEvent.endDate * 1000)})` : ''}
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1, mr: 1, gap: 1 }}>
+                <Typography sx={{ fontWeight: 600, color: '#4A90D9' }}>
+                  Polymarket Strikes {polyEvent ? `(${formatExpiryUTC1(polyEvent.endDate * 1000)})` : ''}
+                </Typography>
+                <ToggleButtonGroup
+                  size="small"
+                  exclusive
+                  value={polyPriceMode}
+                  onChange={(_e, v) => { if (v) setPolyPriceMode(v); }}
+                  onClick={(e) => e.stopPropagation()}
+                  sx={{ height: 28 }}
+                >
+                  <ToggleButton value="bid" sx={{ px: 1.2, py: 0, fontSize: '0.72rem', color: '#EF4444', '&.Mui-selected': { bgcolor: 'rgba(239,68,68,0.12)', color: '#EF4444' } }}>Bid</ToggleButton>
+                  <ToggleButton value="mid" sx={{ px: 1.2, py: 0, fontSize: '0.72rem', '&.Mui-selected': { bgcolor: 'rgba(139,157,195,0.15)' } }}>Mid</ToggleButton>
+                  <ToggleButton value="ask" sx={{ px: 1.2, py: 0, fontSize: '0.72rem', color: '#22C55E', '&.Mui-selected': { bgcolor: 'rgba(34,197,94,0.12)', color: '#22C55E' } }}>Ask</ToggleButton>
+                </ToggleButtonGroup>
+              </Box>
             </AccordionSummary>
             <AccordionDetails>
               <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
@@ -391,14 +418,22 @@ export function ChartScreen({
                       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
                         <Checkbox checked={yesSelected} onChange={() => handlePolyToggle(market.id, 'YES')} size="small" sx={{ '&.Mui-checked': { color: '#22C55E' }, p: 0.5 }} />
                         <Typography variant="caption" sx={{ color: yesSelected ? '#22C55E' : 'text.secondary', minWidth: 30, textAlign: 'right' }}>
-                          {(market.currentPrice * 100).toFixed(1)}
+                          {polyPriceMode === 'ask' && market.bestAsk != null
+                            ? (market.bestAsk * 100).toFixed(1)
+                            : polyPriceMode === 'bid' && market.bestBid != null
+                            ? (market.bestBid * 100).toFixed(1)
+                            : (market.currentPrice * 100).toFixed(1)}
                         </Typography>
                       </Box>
 
                       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
                         <Checkbox checked={noSelected} onChange={() => handlePolyToggle(market.id, 'NO')} size="small" sx={{ '&.Mui-checked': { color: '#EF4444' }, p: 0.5 }} />
                         <Typography variant="caption" sx={{ color: noSelected ? '#EF4444' : 'text.secondary', minWidth: 30, textAlign: 'right' }}>
-                          {((1 - market.currentPrice) * 100).toFixed(1)}
+                          {polyPriceMode === 'ask' && market.bestBid != null
+                            ? ((1 - market.bestBid) * 100).toFixed(1)
+                            : polyPriceMode === 'bid' && market.bestAsk != null
+                            ? ((1 - market.bestAsk) * 100).toFixed(1)
+                            : ((1 - market.currentPrice) * 100).toFixed(1)}
                         </Typography>
                       </Box>
 

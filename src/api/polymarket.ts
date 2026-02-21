@@ -47,13 +47,19 @@ export function parseStrikePrice(title: string): number {
   return isNaN(num) ? 0 : num;
 }
 
+function parseOptionalPrice(raw: string | number | undefined): number | undefined {
+  if (raw == null) return undefined;
+  const v = typeof raw === 'string' ? parseFloat(raw) : raw;
+  return isFinite(v) && v > 0 && v < 1 ? v : undefined;
+}
+
 export function parseMarkets(markets: PolymarketEvent['markets']): ParsedMarket[] {
   return markets.map((market) => {
     const tokenIds = JSON.parse(market.clobTokenIds) as string[];
     let currentPrice = 0;
     try {
       const prices = JSON.parse(market.outcomePrices) as string[];
-      currentPrice = parseFloat(prices[0]); // YES price
+      currentPrice = parseFloat(prices[0]); // YES price (mid)
     } catch {
       currentPrice = 0;
     }
@@ -67,6 +73,8 @@ export function parseMarkets(markets: PolymarketEvent['markets']): ParsedMarket[
       yesTokenId: tokenIds[0],
       noTokenId: tokenIds[1],
       currentPrice,
+      bestBid: parseOptionalPrice(market.bestBid),
+      bestAsk: parseOptionalPrice(market.bestAsk),
       strikePrice: parseStrikePrice(market.groupItemTitle || ''),
     };
   });

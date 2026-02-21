@@ -7,6 +7,8 @@ export interface Market {
   startDate: number; // Unix timestamp (seconds)
   clobTokenIds: string; // JSON-encoded string
   outcomePrices: string; // JSON-encoded string e.g. '["0.85","0.15"]'
+  bestBid?: string | number; // YES token best bid (CLOB top-of-book)
+  bestAsk?: string | number; // YES token best ask (CLOB top-of-book)
 }
 
 export interface PolymarketEvent {
@@ -41,7 +43,9 @@ export interface ParsedMarket {
   startDate: number; // Unix timestamp (seconds)
   yesTokenId: string;
   noTokenId: string;
-  currentPrice: number; // YES outcome price (0-1)
+  currentPrice: number; // YES outcome price mid (0-1)
+  bestBid?: number;     // YES token best bid (0-1); undefined if not available
+  bestAsk?: number;     // YES token best ask (0-1); undefined if not available
   strikePrice: number; // Parsed strike price from groupItemTitle
 }
 
