@@ -2,7 +2,6 @@ import type { ParsedMarket, OptionType, BybitOptionChain, OptMatchResult, Strike
 import { priceHit, priceAbove, bsPrice, bybitTradingFee, solveImpliedVol, autoH } from '../pricing/engine';
 
 const YEAR_SEC = 365.25 * 24 * 3600;
-const BYBIT_QTY = 0.01;
 const NUM_GRID = 200;
 // Allow a small tolerance for floating-point near-zero negatives
 const FEASIBILITY_EPSILON = -0.001;
@@ -26,6 +25,7 @@ export function runOptimization(
   spotPrice: number,
   nowSec: number,
   bybitChain: BybitOptionChain,
+  bybitQty: number = 0.01,
 ): StrikeOptResult[] {
   const results: StrikeOptResult[] = [];
 
@@ -78,13 +78,13 @@ export function runOptimization(
       const tauBybitRem = tauBybit - tauEval; // bybit time remaining at eval
 
       // Entry fee for 0.01 bybit contracts
-      const bybitFee = bybitTradingFee(spotPrice, bybitAsk, BYBIT_QTY);
+      const bybitFee = bybitTradingFee(spotPrice, bybitAsk, bybitQty);
 
       // Bybit option value at poly strike at evaluation time
       const bybitValueAtStrike = bsPrice(
         market.strikePrice, inst.strike, ticker.markIv, tauBybitRem, inst.optionsType,
       );
-      const bybitProfitAtStrike = (bybitValueAtStrike - bybitAsk) * BYBIT_QTY - bybitFee;
+      const bybitProfitAtStrike = (bybitValueAtStrike - bybitAsk) * bybitQty - bybitFee;
 
       // Skip if bybit can't profit at the poly strike (no hedge value)
       if (bybitProfitAtStrike <= 0) continue;
@@ -126,7 +126,7 @@ export function runOptimization(
 
         // Bybit position P&L at evaluation time
         const bybitValue = bsPrice(S, inst.strike, ticker.markIv, tauBybitRem, inst.optionsType);
-        const bybitPnl = (bybitValue - bybitAsk) * BYBIT_QTY - bybitFee;
+        const bybitPnl = (bybitValue - bybitAsk) * bybitQty - bybitFee;
 
         const combined = polyPnl + bybitPnl;
         gridPnl[i] = combined;

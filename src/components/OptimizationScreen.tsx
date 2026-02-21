@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -54,6 +54,7 @@ function VizCard({
   match,
   optionType,
   spotPrice,
+  bybitQty,
   smile,
   bybitSmile,
   polyExpiryTs,
@@ -63,6 +64,7 @@ function VizCard({
   match: OptMatchResult;
   optionType: OptionType;
   spotPrice: number;
+  bybitQty: number;
   smile: SmilePoint[];
   bybitSmile: SmilePoint[];
   polyExpiryTs: number;
@@ -72,7 +74,6 @@ function VizCard({
   const { polyQty, noAskPrice, bybitAsk, bybitFee, instrument, ticker } = match;
   const isDark = useTheme().palette.mode === 'dark';
 
-  // Wide slider bounds covering all three prices with ample padding
   const sliderBounds = useMemo((): [number, number] => {
     const prices = [market.strikePrice, instrument.strike, spotPrice];
     const minP = Math.min(...prices);
@@ -83,7 +84,6 @@ function VizCard({
     return [Math.floor(lo / 100) * 100, Math.ceil(hi / 100) * 100];
   }, [market.strikePrice, instrument.strike, spotPrice]);
 
-  // Step size based on total slider range (same logic as v3)
   const sliderStep = useMemo(() => {
     const range = sliderBounds[1] - sliderBounds[0];
     if (range > 100000) return 1000;
@@ -92,7 +92,6 @@ function VizCard({
     return 1;
   }, [sliderBounds]);
 
-  // Initial chart price range covers all three prices with ±20% padding
   const [priceRange, setPriceRange] = useState<[number, number]>(() => {
     const prices = [market.strikePrice, instrument.strike, spotPrice];
     const minP = Math.min(...prices);
@@ -126,9 +125,9 @@ function VizCard({
     side: 'buy',
     entryPrice: bybitAsk,
     markIv: ticker.markIv,
-    quantity: 0.01,
+    quantity: bybitQty,
     entryFee: bybitFee,
-  }), [instrument, ticker, bybitAsk, bybitFee]);
+  }), [instrument, ticker, bybitAsk, bybitFee, bybitQty]);
 
   const nowTs = useMemo(() => Math.floor(Date.now() / 1000), []);
   const polyTauNow = Math.max((polyExpiryTs - nowTs) / (365.25 * 24 * 3600), 0);
@@ -167,7 +166,7 @@ function VizCard({
               Bybit
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {instrument.symbol} — buy ×0.01 @ ${bybitAsk.toFixed(2)} (${(bybitAsk * 0.01).toFixed(2)}, fee: ${bybitFee.toFixed(2)})
+              {instrument.symbol} — buy ×{bybitQty} @ ${bybitAsk.toFixed(2)} (${(bybitAsk * bybitQty).toFixed(2)}, fee: ${bybitFee.toFixed(2)})
             </Typography>
           </Box>
         </Box>
@@ -281,14 +280,25 @@ export function OptimizationScreen({
   const isDark = muiTheme.palette.mode === 'dark';
 
   const [vizSelection, setVizSelection] = useState<VizSelection | null>(null);
+  const [bybitQtyInput, setBybitQtyInput] = useState('0.01');
+
+  const bybitQty = useMemo(() => {
+    const v = parseFloat(bybitQtyInput);
+    if (isNaN(v) || v <= 0) return 0.01;
+    return Math.round(v * 100) / 100;
+  }, [bybitQtyInput]);
+
+  // Clear chart when qty changes (results are recomputed, old match refs are stale)
+  useEffect(() => {
+    setVizSelection(null);
+  }, [bybitQty]);
 
   const nowSec = useMemo(() => Math.floor(Date.now() / 1000), []);
 
-  // Run optimization synchronously in useMemo (fast: 200 pts × ~100 options × ~15 strikes)
   const optResults = useMemo(() => {
     if (!polyMarkets.length || !bybitChain || spotPrice <= 0) return [];
-    return runOptimization(polyMarkets, optionType, spotPrice, nowSec, bybitChain);
-  }, [polyMarkets, optionType, spotPrice, bybitChain, nowSec]);
+    return runOptimization(polyMarkets, optionType, spotPrice, nowSec, bybitChain, bybitQty);
+  }, [polyMarkets, optionType, spotPrice, bybitChain, nowSec, bybitQty]);
 
   const polyExpiryTs = polyEvent?.endDate ?? 0;
   const polyTauNow = useMemo(() => {
@@ -322,6 +332,26 @@ export function OptimizationScreen({
     return points.sort((a, b) => a.moneyness - b.moneyness);
   }, [bybitChain, spotPrice]);
 
+  // Best % P&L per column across all strikes (for header badge)
+  const bestPct = useMemo(() => {
+    let p5 = -Infinity, p10 = -Infinity, p20 = -Infinity;
+    for (const r of optResults) {
+      const pct = (match: OptMatchResult | null, pnl: number) => {
+        if (!match) return -Infinity;
+        const cost = match.polyQty * match.noAskPrice + match.bybitAsk * bybitQty + match.bybitFee;
+        return cost > 0 ? (pnl / cost) * 100 : -Infinity;
+      };
+      if (r.best5)  p5  = Math.max(p5,  pct(r.best5,  r.best5.avgPnl5));
+      if (r.best10) p10 = Math.max(p10, pct(r.best10, r.best10.avgPnl10));
+      if (r.best20) p20 = Math.max(p20, pct(r.best20, r.best20.avgPnl20));
+    }
+    return {
+      p5:  isFinite(p5)  ? p5  : null,
+      p10: isFinite(p10) ? p10 : null,
+      p20: isFinite(p20) ? p20 : null,
+    };
+  }, [optResults, bybitQty]);
+
   const handleViz = useCallback((strikeResult: StrikeOptResult, match: OptMatchResult, range: '5' | '10' | '20') => {
     setVizSelection(prev =>
       (prev?.match === match && prev?.range === range) ? null : { strikeResult, match, range }
@@ -349,7 +379,7 @@ export function OptimizationScreen({
 
     const { instrument, polyQty, noAskPrice, bybitAsk, bybitFee, avgPnl5, avgPnl10, avgPnl20 } = match;
     const avgPnl = range === '5' ? avgPnl5 : range === '10' ? avgPnl10 : avgPnl20;
-    const totalCost = polyQty * noAskPrice + bybitAsk * 0.01 + bybitFee;
+    const totalCost = polyQty * noAskPrice + bybitAsk * bybitQty + bybitFee;
     const pct = totalCost > 0 ? (avgPnl / totalCost) * 100 : 0;
     const isSelected = vizSelection?.match === match && vizSelection?.range === range;
 
@@ -361,10 +391,10 @@ export function OptimizationScreen({
           bgcolor: isSelected ? 'rgba(0, 209, 255, 0.04)' : 'transparent',
         }}>
           <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600, mb: 0.5 }}>
-            {instrument.symbol} — buy ×0.01
+            {instrument.symbol} — buy ×{bybitQty}
           </Typography>
           <Typography variant="body2" sx={{ fontSize: '0.72rem' }} color="text.secondary">
-            @ ${bybitAsk.toFixed(0)} (${(bybitAsk * 0.01).toFixed(2)}, fee: ${bybitFee.toFixed(2)})
+            @ ${bybitAsk.toFixed(0)} (${(bybitAsk * bybitQty).toFixed(2)}, fee: ${bybitFee.toFixed(2)})
           </Typography>
           <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#4A90D9', mt: 0.5 }}>
             Poly: NO ×{polyQty.toFixed(2)} @ {noAskPrice.toFixed(4)} (${(noAskPrice * polyQty).toFixed(2)})
@@ -392,6 +422,20 @@ export function OptimizationScreen({
 
   const isLoading = polyMarkets.length > 0 && bybitChain !== null && optResults.length === 0;
 
+  // Badge component shown in column header
+  const PctBadge = ({ pct }: { pct: number | null }) =>
+    pct !== null ? (
+      <Box sx={{
+        position: 'absolute', top: '50%', right: 6,
+        transform: 'translateY(-50%)',
+        fontSize: '0.88rem', fontWeight: 800, color: '#22C55E',
+        fontFamily: '"Roboto Mono", monospace',
+        lineHeight: 1,
+      }}>
+        +{pct.toFixed(1)}%
+      </Box>
+    ) : null;
+
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', p: 2, gap: 1.5 }}>
       {/* Header */}
@@ -411,13 +455,44 @@ export function OptimizationScreen({
           }}>
             Optimization
           </Typography>
-          <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+          <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
             {crypto && <Chip label={crypto} size="small" sx={{ bgcolor: 'rgba(247, 147, 26, 0.1)', color: '#F7931A', border: '1px solid rgba(247, 147, 26, 0.3)' }} />}
             {optionType && <Chip label={optionType === 'hit' ? 'One-Touch Barrier' : 'European Binary'} size="small" sx={{ bgcolor: 'rgba(0, 209, 255, 0.1)', color: '#00D1FF', border: '1px solid rgba(0, 209, 255, 0.3)' }} />}
             {expiryDate && <Chip label={`Poly: ${expiryDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`} size="small" sx={{ bgcolor: 'rgba(139, 157, 195, 0.1)', color: '#8B9DC3', border: '1px solid rgba(139, 157, 195, 0.2)' }} />}
             {ttxSec > 0 && <Chip label={`TTX: ${formatTTX(ttxSec)}`} size="small" sx={{ bgcolor: 'rgba(139, 157, 195, 0.1)', color: '#8B9DC3', border: '1px solid rgba(139, 157, 195, 0.2)' }} />}
             {spotPrice > 0 && <Chip label={`Spot: $${spotPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} size="small" sx={{ bgcolor: 'rgba(34, 197, 94, 0.1)', color: '#22C55E', border: '1px solid rgba(34, 197, 94, 0.3)' }} />}
             {bybitChain && <Chip label={`Bybit: ${bybitChain.expiryLabel}`} size="small" sx={{ bgcolor: 'rgba(255, 140, 0, 0.1)', color: '#FF8C00', border: '1px solid rgba(255, 140, 0, 0.3)' }} />}
+            {/* Bybit quantity input — styled to match chip row */}
+            <Box sx={{
+              display: 'flex', alignItems: 'center', gap: 0.5,
+              border: '1px solid rgba(255, 140, 0, 0.3)',
+              borderRadius: '16px', px: 1, py: '3px',
+              bgcolor: 'rgba(255, 140, 0, 0.06)',
+            }}>
+              <Typography variant="caption" sx={{ color: '#FF8C00', fontSize: '0.72rem', userSelect: 'none' }}>
+                Bybit qty:
+              </Typography>
+              <Box
+                component="input"
+                type="number"
+                value={bybitQtyInput}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBybitQtyInput(e.target.value)}
+                step="0.01"
+                min="0.01"
+                sx={{
+                  width: 52,
+                  bgcolor: 'transparent',
+                  border: 'none',
+                  color: '#FF8C00',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  outline: 'none',
+                  fontFamily: 'monospace',
+                  '&::-webkit-inner-spin-button': { WebkitAppearance: 'none' },
+                  '&::-webkit-outer-spin-button': { WebkitAppearance: 'none' },
+                }}
+              />
+            </Box>
           </Box>
         </Box>
       </Box>
@@ -440,9 +515,18 @@ export function OptimizationScreen({
             <TableHead>
               <TableRow sx={{ bgcolor: isDark ? 'rgba(19, 26, 42, 0.5)' : 'rgba(0,0,0,0.03)' }}>
                 <TableCell sx={{ fontWeight: 700, width: '25%', color: '#4A90D9' }}>Poly Strike</TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±5%</TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±10%</TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±20%</TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E', position: 'relative' }}>
+                  Best ±5%
+                  <PctBadge pct={bestPct.p5} />
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E', position: 'relative' }}>
+                  Best ±10%
+                  <PctBadge pct={bestPct.p10} />
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E', position: 'relative' }}>
+                  Best ±20%
+                  <PctBadge pct={bestPct.p20} />
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -477,13 +561,14 @@ export function OptimizationScreen({
         </TableContainer>
       )}
 
-      {/* Visualization section — rendered when a match is selected */}
+      {/* Visualization section */}
       {vizSelection && (
         <VizCard
           strikeResult={vizSelection.strikeResult}
           match={vizSelection.match}
           optionType={optionType}
           spotPrice={spotPrice}
+          bybitQty={bybitQty}
           smile={ivSmile}
           bybitSmile={bybitSmile}
           polyExpiryTs={polyExpiryTs}
