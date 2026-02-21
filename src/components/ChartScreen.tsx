@@ -563,7 +563,7 @@ export function ChartScreen({
                   Polymarket
                 </Typography>
                 {polyPositions.map((pos, i) => (
-                  <Typography key={i} variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                  <Typography key={i} variant="h6" color="text.secondary" sx={{ fontWeight: 400 }}>
                     {pos.groupItemTitle} — {pos.side} ×{pos.quantity} @ {pos.entryPrice.toFixed(4)}
                   </Typography>
                 ))}
@@ -575,7 +575,7 @@ export function ChartScreen({
                   Bybit
                 </Typography>
                 {bybitPositions.map((pos, i) => (
-                  <Typography key={i} variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                  <Typography key={i} variant="h6" color="text.secondary" sx={{ fontWeight: 400 }}>
                     {pos.symbol} — {pos.side} ×{pos.quantity} @ ${pos.entryPrice.toFixed(2)} (fee: ${pos.entryFee.toFixed(2)})
                   </Typography>
                 ))}
