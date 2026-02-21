@@ -2,32 +2,39 @@
 /**
  * H Exponent Analysis — find optimal time-scaling exponent for Polymarket pricing
  *
- * Tests which H value produces the most stationary (stable) implied volatility
- * across a 1–7 day window before expiry.  A correct H means IV calibrated from
- * the market price does not drift systematically over time.
+ * Tests which H produces the most stationary implied volatility across time.
+ * A correct H = IV calibrated from market price doesn't drift systematically.
  *
- * Two metrics:
- *   1. IV StdDev   — lower = IV more stable over time
- *   2. IV Trend    — slope of IV vs. tau; near-zero = model time-decay matches market
- *   3. Pred RMSE   — out-of-sample: calibrate IV on early data, predict late prices
+ * Metrics:
+ *   StdDev  — std dev of IV across time (lower = more stable)
+ *   Trend   — dIV/d(tauDays); near-zero = model time-decay matches market
+ *             Negative → IV rises near expiry → model decays too FAST → raise H
+ *             Positive → IV falls near expiry → model decays too SLOW → lower H
+ *   PredRMSE— out-of-sample: calibrate IV on early half, predict late half
  *
  * Usage:
- *   node scripts/analyze_h.mjs [slug] [days]
- *
- * Examples:
- *   node scripts/analyze_h.mjs what-price-will-bitcoin-hit-in-january-2026 7
- *   node scripts/analyze_h.mjs what-price-will-bitcoin-hit-in-february-2026 7
+ *   node scripts/analyze_h.mjs [slug] [days]           # single event
+ *   node scripts/analyze_h.mjs --above [days]          # all Feb 13-24 above events
+ *   node scripts/analyze_h.mjs --hit [days]            # Jan + Feb hit events
+ *   node scripts/analyze_h.mjs --all [days]            # everything
  *
  * Requires: Node 18+ (uses global fetch)
  */
 
-const GAMMA  = 'https://gamma-api.polymarket.com';
-const CLOB   = 'https://clob.polymarket.com';
+const GAMMA   = 'https://gamma-api.polymarket.com';
+const CLOB    = 'https://clob.polymarket.com';
 const BINANCE = 'https://api.binance.com';
 
 const H_VALUES = [0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80];
 const YEARS    = 365.25 * 24 * 3600;
-const DELAY_MS = 300; // delay between CLOB requests (rate limiting)
+const DELAY_MS = 250;
+
+const ABOVE_SLUGS = [13,14,15,16,17,18,19,20,21,22,23,24]
+  .map(n => `bitcoin-above-on-february-${n}`);
+const HIT_SLUGS = [
+  'what-price-will-bitcoin-hit-in-january-2026',
+  'what-price-will-bitcoin-hit-in-february-2026',
+];
 
 // ─── Math (identical to src/pricing/engine.ts) ───────────────────────────────
 
@@ -96,7 +103,7 @@ function solveIV(S, K, tau, yesPrice, type, isUp, H) {
 // ─── Stats ───────────────────────────────────────────────────────────────────
 
 const mean   = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
-const rmse   = (pred, actual) => Math.sqrt(mean(pred.map((p, i) => (p - actual[i]) ** 2)));
+const rmse   = (pred, act) => Math.sqrt(mean(pred.map((p, i) => (p - act[i]) ** 2)));
 
 function stdDev(arr) {
   if (arr.length < 2) return 0;
@@ -133,7 +140,7 @@ function parseStrike(title) {
 }
 
 function detectType(event) {
-  const slug = (event.series?.seriesSlug || '').toLowerCase();
+  const slug = (event.series?.seriesSlug || event.slug || '').toLowerCase();
   if (slug.includes('hit') || slug.includes('reach')) return 'hit';
   if (slug.includes('above')) return 'above';
   for (const m of (event.markets || [])) {
@@ -144,95 +151,125 @@ function detectType(event) {
   return 'above';
 }
 
-function col(s, n) { return String(s).padEnd(n); }
+function col(s, n, right = false) {
+  const str = String(s);
+  return right ? str.padStart(n) : str.padEnd(n);
+}
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Core analysis ────────────────────────────────────────────────────────────
 
-async function analyzeEvent(slug, days) {
-  console.log(`\n${'═'.repeat(68)}`);
-  console.log(`  ${slug}`);
-  console.log(`${'═'.repeat(68)}\n`);
+async function analyzeEvent(slug, daysOverride, verbose = true) {
+  if (verbose) {
+    console.log(`\n${'═'.repeat(70)}`);
+    console.log(`  ${slug}`);
+    console.log(`${'═'.repeat(70)}\n`);
+  } else {
+    process.stdout.write(`  ${slug.padEnd(45)} `);
+  }
 
-  // 1. Fetch event
-  const event = await fetchJson(`${GAMMA}/events/slug/${slug}`);
-  const expiry  = parseTs(event.endDate);
-  const optType = detectType(event);
-  const nowTs   = Math.floor(Date.now() / 1000);
-  const isLive  = expiry > nowTs;
+  let event;
+  try {
+    event = await fetchJson(`${GAMMA}/events/slug/${slug}`);
+  } catch (e) {
+    if (!verbose) console.log(`FETCH ERROR: ${e.message}`);
+    return null;
+  }
 
-  console.log(`Title:  ${event.title}`);
-  console.log(`Type:   ${optType}`);
-  console.log(`Expiry: ${new Date(expiry * 1000).toUTCString()}`);
-  console.log(isLive ? `Status: LIVE (${((expiry - nowTs) / 86400).toFixed(1)}d remaining)` : 'Status: EXPIRED');
+  const expiry    = parseTs(event.endDate);
+  const startDate = parseTs(event.startDate);
+  const optType   = detectType(event);
+  const nowTs     = Math.floor(Date.now() / 1000);
+  const isLive    = expiry > nowTs;
+  const eventDays = Math.min((expiry - startDate) / 86400, 30);
+  const days      = daysOverride ?? Math.ceil(eventDays);
 
-  // 2. Parse markets
+  if (verbose) {
+    console.log(`Title:  ${event.title}`);
+    console.log(`Type:   ${optType}`);
+    console.log(`Expiry: ${new Date(expiry * 1000).toUTCString()}`);
+    console.log(isLive
+      ? `Status: LIVE (${((expiry - nowTs) / 86400).toFixed(1)}d remaining)`
+      : `Status: EXPIRED (${((nowTs - expiry) / 86400).toFixed(1)}d ago)`);
+  }
+
+  // Parse markets — "above" events have resolved strikes (price=0/1), filter later
   const markets = (event.markets || [])
     .map(m => {
       const tids = JSON.parse(m.clobTokenIds || '[]');
       let mid = 0;
       try { mid = parseFloat(JSON.parse(m.outcomePrices)[0]); } catch {}
       return {
-        id: m.id,
-        title: m.groupItemTitle || m.question,
+        id: m.id, title: m.groupItemTitle || m.question,
         strike: parseStrike(m.groupItemTitle || m.question),
-        yesTokenId: tids[0],
-        mid,
+        yesTokenId: tids[0], mid,
       };
     })
     .filter(m => m.strike > 0 && m.yesTokenId);
 
-  console.log(`Markets: ${markets.length} strikes\n`);
+  if (verbose) console.log(`Markets: ${markets.length} strikes\n`);
 
-  // 3. Time window
+  // Time window: go back `days` from min(expiry, now)
   const winEnd   = Math.min(expiry, nowTs);
   const winStart = winEnd - days * 86400;
-  console.log(`Window: ${new Date(winStart * 1000).toISOString().slice(0, 16)}Z → ${new Date(winEnd * 1000).toISOString().slice(0, 16)}Z`);
 
-  // 4. BTC spot (Binance 1h klines)
-  process.stdout.write('Fetching BTC spot... ');
-  const klines = await fetchJson(
-    `${BINANCE}/api/v3/klines?symbol=BTCUSDT&interval=1h` +
-    `&startTime=${winStart * 1000}&endTime=${winEnd * 1000}&limit=1000`
-  );
-  const btcHourly = new Map();
-  for (const k of klines) {
-    btcHourly.set(Math.floor(k[0] / 3600000) * 3600, parseFloat(k[4]));
+  // Choose fidelity based on window length: 1h for >2 days, 5min for shorter
+  const fidelity = days >= 2 ? 60 : 5;
+
+  if (verbose) {
+    console.log(`Window: ${new Date(winStart * 1000).toISOString().slice(0, 16)}Z → ` +
+      `${new Date(winEnd * 1000).toISOString().slice(0, 16)}Z (fidelity: ${fidelity}min)`);
   }
-  console.log(`${btcHourly.size} hourly prices`);
+
+  // BTC spot
+  if (verbose) process.stdout.write('Fetching BTC spot... ');
+  let klines;
+  try {
+    klines = await fetchJson(
+      `${BINANCE}/api/v3/klines?symbol=BTCUSDT&interval=${fidelity >= 60 ? '1h' : '5m'}` +
+      `&startTime=${winStart * 1000}&endTime=${winEnd * 1000}&limit=1000`
+    );
+  } catch (e) {
+    if (!verbose) console.log(`BTC FETCH ERROR`);
+    return null;
+  }
+  const btcMap = new Map();
+  const fSec = fidelity * 60;
+  for (const k of klines) {
+    btcMap.set(Math.floor(k[0] / (fSec * 1000)) * fSec, parseFloat(k[4]));
+  }
+  if (verbose) console.log(`${btcMap.size} prices`);
 
   function lookupBtc(ts) {
-    const h = Math.floor(ts / 3600) * 3600;
-    return btcHourly.get(h) ?? btcHourly.get(h - 3600) ?? btcHourly.get(h + 3600);
+    const h = Math.floor(ts / fSec) * fSec;
+    return btcMap.get(h) ?? btcMap.get(h - fSec) ?? btcMap.get(h + fSec);
   }
 
-  // 5. Polymarket price history (CLOB, 1h fidelity)
-  console.log('Fetching Polymarket price history...');
+  // Polymarket price history
+  if (verbose) console.log('Fetching Polymarket price history...');
   const mktData = [];
   for (const m of markets) {
     await sleep(DELAY_MS);
     try {
       const url = `${CLOB}/prices-history?market=${m.yesTokenId}` +
-        `&startTs=${winStart}&endTs=${winEnd}&fidelity=60`;
+        `&startTs=${winStart}&endTs=${winEnd}&fidelity=${fidelity}`;
       const data = await fetchJson(url);
-      const hist = (data.history || []).filter(pt => pt.p > 0.008 && pt.p < 0.992);
-      if (hist.length < 5) {
-        console.log(`  skip  ${m.title} (${hist.length} pts)`);
-        continue;
-      }
+      // For "above": filter aggressively — resolved markets spend most time at 0/1
+      const hist = (data.history || []).filter(pt => pt.p > 0.01 && pt.p < 0.99);
+      if (hist.length < 5) continue;
       mktData.push({ ...m, history: hist });
-      console.log(`  ok    ${m.title}: ${hist.length} pts`);
+      if (verbose) console.log(`  ok    ${m.title}: ${hist.length} pts`);
     } catch (e) {
-      console.log(`  error ${m.title}: ${e.message}`);
+      if (verbose) console.log(`  error ${m.title}: ${e.message}`);
     }
   }
 
   if (mktData.length === 0) {
-    console.log('\nNo usable data. CLOB history may not be available for this event yet.\n');
+    if (verbose) console.log('\nNo usable market data (all strikes resolved at 0 or 1).\n');
+    else console.log('no usable data');
     return null;
   }
 
-  // 6. Build aligned dataset
-  // Determine isUpBarrier per strike from earliest available spot (furthest from expiry)
+  // Build aligned dataset
   const barrierDir = new Map();
   const dataset = [];
 
@@ -246,46 +283,42 @@ async function analyzeEvent(slug, days) {
       if (!barrierDir.has(m.strike)) {
         barrierDir.set(m.strike, m.strike > spot);
       }
-      dataset.push({
-        strike: m.strike, title: m.title,
-        tau, tauDays: tau * 365.25,
-        spot, yesPrice: pt.p,
-      });
+      dataset.push({ strike: m.strike, tau, tauDays: tau * 365.25, spot, yesPrice: pt.p });
     }
   }
-  // Note: for live events the tau range will be >days (e.g. 8-15d for February with 7d history)
-  // That is expected and valid — the analysis covers whatever tau range is available.
 
-  if (dataset.length < 20) {
-    console.log('\nInsufficient aligned data points.\n');
+  if (dataset.length < 15) {
+    if (verbose) console.log('\nInsufficient aligned data.\n');
+    else console.log(`only ${dataset.length} pts`);
     return null;
   }
 
-  const tauRange  = [Math.min(...dataset.map(d => d.tauDays)), Math.max(...dataset.map(d => d.tauDays))];
-  const spotRange = [Math.min(...dataset.map(d => d.spot)),    Math.max(...dataset.map(d => d.spot))];
-  console.log(`\nAligned: ${dataset.length} pts`);
-  console.log(`Tau:     ${tauRange[0].toFixed(2)}d – ${tauRange[1].toFixed(2)}d`);
-  console.log(`BTC:     $${spotRange[0].toFixed(0)} – $${spotRange[1].toFixed(0)}`);
-
-  // Split: early (tau > midpoint) for calibration, late (tau < midpoint) for prediction test
-  const midTau  = (tauRange[0] + tauRange[1]) / 2;
+  const tauMin  = Math.min(...dataset.map(d => d.tauDays));
+  const tauMax  = Math.max(...dataset.map(d => d.tauDays));
+  const midTau  = (tauMin + tauMax) / 2;
   const earlyPts = dataset.filter(d => d.tauDays > midTau);
   const latePts  = dataset.filter(d => d.tauDays <= midTau);
-  console.log(`Split:   ${earlyPts.length} early / ${latePts.length} late pts (midpoint ${midTau.toFixed(2)}d)\n`);
 
-  // 7. Compute metrics per H
+  if (verbose) {
+    const spotMin = Math.min(...dataset.map(d => d.spot));
+    const spotMax = Math.max(...dataset.map(d => d.spot));
+    console.log(`\nAligned: ${dataset.length} pts | tau: ${tauMin.toFixed(2)}-${tauMax.toFixed(2)}d` +
+      ` | BTC: $${spotMin.toFixed(0)}-$${spotMax.toFixed(0)}`);
+    console.log(`Split: ${earlyPts.length} early / ${latePts.length} late (mid ${midTau.toFixed(2)}d)\n`);
+  }
+
+  // Compute metrics per H
   const results = [];
 
   for (const H of H_VALUES) {
-    const ivsByStrike   = new Map();
-    const tausByStrike  = new Map();
+    const ivsByStrike  = new Map();
+    const tausByStrike = new Map();
 
-    // Full dataset: IV stability
     for (const pt of dataset) {
       const isUp = barrierDir.get(pt.strike) ?? (pt.strike > pt.spot);
       const iv = solveIV(pt.spot, pt.strike, pt.tau, pt.yesPrice, optType, isUp, H);
       if (iv == null || !isFinite(iv) || iv <= 0.01 || iv >= 9.9) continue;
-      if (!ivsByStrike.has(pt.strike))  { ivsByStrike.set(pt.strike, []); tausByStrike.set(pt.strike, []); }
+      if (!ivsByStrike.has(pt.strike)) { ivsByStrike.set(pt.strike, []); tausByStrike.set(pt.strike, []); }
       ivsByStrike.get(pt.strike).push(iv);
       tausByStrike.get(pt.strike).push(pt.tauDays);
     }
@@ -295,22 +328,21 @@ async function analyzeEvent(slug, days) {
       const taus = tausByStrike.get(strike);
       if (ivs.length < 4) continue;
       strikeSDs.push(stdDev(ivs));
-      strikeTrends.push(linSlope(taus, ivs)); // dIV/d(tau_days); +ve = IV rises as tau rises
+      strikeTrends.push(linSlope(taus, ivs));
       allIvs.push(...ivs);
     }
 
-    // Prediction test: calibrate mean IV on early data, predict late prices
+    // Prediction RMSE: calibrate from early, predict late
     const meanIvByStrike = new Map();
     for (const [strike, ivs] of ivsByStrike) {
-      // Only use early-period IVs for calibration
       const earlyIvs = [];
+      const taus = tausByStrike.get(strike);
       for (let i = 0; i < ivs.length; i++) {
-        if (tausByStrike.get(strike)[i] > midTau) earlyIvs.push(ivs[i]);
+        if (taus[i] > midTau) earlyIvs.push(ivs[i]);
       }
       if (earlyIvs.length > 0) meanIvByStrike.set(strike, mean(earlyIvs));
     }
-
-    const predPrices = [], actualPrices = [];
+    const predP = [], actP = [];
     for (const pt of latePts) {
       const calibIv = meanIvByStrike.get(pt.strike);
       if (!calibIv) continue;
@@ -319,8 +351,7 @@ async function analyzeEvent(slug, days) {
         ? priceAbove(pt.spot, pt.strike, calibIv, pt.tau, H)
         : priceHit(pt.spot, pt.strike, calibIv, pt.tau, isUp, H);
       if (!isFinite(pred)) continue;
-      predPrices.push(pred);
-      actualPrices.push(pt.yesPrice);
+      predP.push(pred); actP.push(pt.yesPrice);
     }
 
     results.push({
@@ -329,146 +360,221 @@ async function analyzeEvent(slug, days) {
       avgIv:    allIvs.length > 0 ? mean(allIvs) : null,
       avgSD:    strikeSDs.length > 0 ? mean(strikeSDs) : null,
       avgTrend: strikeTrends.length > 0 ? mean(strikeTrends) : null,
-      predRmse: predPrices.length >= 5 ? rmse(predPrices, actualPrices) : null,
-      nPred:    predPrices.length,
+      predRmse: predP.length >= 5 ? rmse(predP, actP) : null,
+      nPred:    predP.length,
     });
   }
 
-  // 8. Print results
   const valid    = results.filter(r => r.avgSD != null);
-  const bestSD   = valid.reduce((b, r) => r.avgSD < b.avgSD ? r : b, valid[0]);
+  if (valid.length === 0) {
+    if (!verbose) console.log('no valid H results');
+    return null;
+  }
+
+  const bestSD    = valid.reduce((b, r) => r.avgSD < b.avgSD ? r : b, valid[0]);
   const bestTrend = valid.reduce((b, r) => Math.abs(r.avgTrend) < Math.abs(b.avgTrend) ? r : b, valid[0]);
   const validPred = valid.filter(r => r.predRmse != null);
   const bestRmse  = validPred.length > 0
     ? validPred.reduce((b, r) => r.predRmse < b.predRmse ? r : b, validPred[0])
     : null;
 
-  console.log(`${'─'.repeat(80)}`);
-  console.log(`IV Stability — ${optType.toUpperCase()} type | ${mktData.length} strikes`);
-  console.log(`${'─'.repeat(80)}`);
-  console.log(
-    col('H', 6) +
-    col('AvgIV', 8) +
-    col('StdDev↓', 10) +
-    col('Trend/day', 13) +
-    col('PredRMSE↓', 12) +
-    'Verdict'
-  );
-  console.log('─'.repeat(80));
+  if (verbose) {
+    console.log(`${'─'.repeat(80)}`);
+    console.log(`IV Stability — ${optType.toUpperCase()} | ${mktData.length} strikes | ${dataset.length} pts`);
+    console.log('─'.repeat(80));
+    console.log(col('H', 6) + col('AvgIV', 8) + col('StdDev↓', 10) + col('Trend/day', 13) + col('PredRMSE↓', 12) + 'Verdict');
+    console.log('─'.repeat(80));
 
-  for (const r of results) {
-    if (r.avgSD == null) { console.log(`${r.H.toFixed(2).padEnd(6)} (no data)`); continue; }
+    for (const r of results) {
+      if (r.avgSD == null) { console.log(`${r.H.toFixed(2).padEnd(6)} (no data)`); continue; }
+      const marks = [];
+      if (r.H === bestSD.H)              marks.push('★SD');
+      if (r.H === bestTrend.H)           marks.push('★Trend');
+      if (bestRmse && r.H === bestRmse.H) marks.push('★RMSE');
+      if (r.H === 0.65 && marks.length === 0) marks.push('(default)');
+      const tStr = (r.avgTrend >= 0 ? '+' : '') + r.avgTrend.toFixed(4);
+      const rStr = r.predRmse != null ? r.predRmse.toFixed(4) : '   n/a';
+      console.log(
+        col(r.H.toFixed(2), 6) + col(r.avgIv.toFixed(3), 8) +
+        col(r.avgSD.toFixed(4), 10) + col(tStr, 13) +
+        col(rStr, 12) + marks.join(' ')
+      );
+    }
+    console.log('─'.repeat(80));
+    console.log(`Best → StdDev:H=${bestSD.H}  Trend:H=${bestTrend.H}  RMSE:H=${bestRmse?.H ?? 'n/a'}`);
 
-    const marks = [];
-    if (r.H === bestSD.H)              marks.push('★StdDev');
-    if (r.H === bestTrend.H)           marks.push('★Trend');
-    if (bestRmse && r.H === bestRmse.H) marks.push('★RMSE');
-    if (r.H === 0.65 && marks.length === 0) marks.push('(app default)');
+    // Trend direction
+    const trendAtBest = results.find(r => r.H === bestSD.H)?.avgTrend ?? 0;
+    if (Math.abs(trendAtBest) < 0.003)
+      console.log('Trend: ✓ IV stationary');
+    else if (trendAtBest < 0)
+      console.log(`Trend: IV rises near expiry → model decays too fast → raise H above ${bestSD.H}`);
+    else
+      console.log(`Trend: IV falls near expiry → model decays too slow → lower H below ${bestSD.H}`);
 
-    const trendStr = (r.avgTrend >= 0 ? '+' : '') + r.avgTrend.toFixed(4);
-    const rmseStr  = r.predRmse != null ? r.predRmse.toFixed(4) : '  n/a';
-
+    // Per-strike table at best H
+    console.log(`\nPer-strike at H=${bestSD.H}:`);
+    console.log(col('Strike', 10) + col('Dir', 5) + col('AvgIV', 8) + col('SD', 8) + col('Trend', 10) + col('N', 5) + 'LatestP');
+    console.log('─'.repeat(56));
+    const psMap = new Map();
+    for (const pt of dataset) {
+      const isUp = barrierDir.get(pt.strike) ?? (pt.strike > pt.spot);
+      const iv = solveIV(pt.spot, pt.strike, pt.tau, pt.yesPrice, optType, isUp, bestSD.H);
+      if (iv == null || !isFinite(iv) || iv <= 0.01 || iv >= 9.9) continue;
+      if (!psMap.has(pt.strike)) psMap.set(pt.strike, { ivs: [], taus: [], latest: pt.yesPrice });
+      const s = psMap.get(pt.strike);
+      s.ivs.push(iv); s.taus.push(pt.tauDays); s.latest = pt.yesPrice;
+    }
+    for (const [strike, s] of [...psMap.entries()].sort((a, b) => a[0] - b[0])) {
+      if (s.ivs.length < 3) continue;
+      const dir = barrierDir.get(strike) ? 'UP↑' : 'DN↓';
+      const t = linSlope(s.taus, s.ivs);
+      console.log(
+        col(`$${strike}`, 10) + col(dir, 5) +
+        col(mean(s.ivs).toFixed(3), 8) + col(stdDev(s.ivs).toFixed(4), 8) +
+        col((t >= 0 ? '+' : '') + t.toFixed(4), 10) + col(s.ivs.length, 5) +
+        (s.latest * 100).toFixed(1) + '%'
+      );
+    }
+  } else {
+    // Compact output for batch mode
+    const trendStr = (bestSD.avgTrend >= 0 ? '+' : '') + bestSD.avgTrend.toFixed(3);
+    const rmseStr  = bestRmse?.H?.toFixed(2) ?? 'n/a';
     console.log(
-      col(r.H.toFixed(2), 6) +
-      col(r.avgIv.toFixed(3), 8) +
-      col(r.avgSD.toFixed(4), 10) +
-      col(trendStr, 13) +
-      col(rmseStr, 12) +
-      marks.join(' ')
-    );
-  }
-  console.log('─'.repeat(80));
-
-  const winners = [`Min StdDev → H=${bestSD.H}`, `Min |Trend| → H=${bestTrend.H}`];
-  if (bestRmse) winners.push(`Min PredRMSE → H=${bestRmse.H}`);
-  console.log('\nWinners: ' + winners.join('   |   '));
-
-  // Trend direction advice
-  // dIV/d(tauDays): tau rises = moving AWAY from expiry
-  // Negative slope → IV is lower far from expiry, higher near expiry
-  //   → model price decays too fast near expiry → raise H to slow decay
-  // Positive slope → IV is higher far from expiry, lower near expiry
-  //   → model price decays too slow near expiry → lower H to speed decay
-  console.log('\nTrend/day interpretation (for min-StdDev H):');
-  const trend = results.find(r => r.H === bestSD.H)?.avgTrend ?? 0;
-  if (Math.abs(trend) < 0.005)
-    console.log(`  ✓ IV stationary — model time-decay matches market at H=${bestSD.H}`);
-  else if (trend < 0)
-    console.log(`  IV higher near expiry → model decays too fast → try higher H (> ${bestSD.H})`);
-  else
-    console.log(`  IV lower near expiry → model decays too slow → try lower H (< ${bestSD.H})`);
-
-  // Per-strike summary at best H
-  console.log(`\nPer-strike at H=${bestSD.H}:`);
-  console.log(col('Strike', 10) + col('Dir', 5) + col('AvgIV', 8) + col('SD', 8) + col('Trend', 10) + col('N', 5) + 'MidPrice');
-  console.log('─'.repeat(58));
-
-  const bestH = bestSD.H;
-  const perStrike = new Map();
-  for (const pt of dataset) {
-    const isUp = barrierDir.get(pt.strike) ?? (pt.strike > pt.spot);
-    const iv = solveIV(pt.spot, pt.strike, pt.tau, pt.yesPrice, optType, isUp, bestH);
-    if (iv == null || !isFinite(iv) || iv <= 0.01 || iv >= 9.9) continue;
-    if (!perStrike.has(pt.strike)) perStrike.set(pt.strike, { ivs: [], taus: [], title: pt.title, mids: [] });
-    perStrike.get(pt.strike).ivs.push(iv);
-    perStrike.get(pt.strike).taus.push(pt.tauDays);
-    perStrike.get(pt.strike).mids.push(pt.yesPrice);
-  }
-
-  for (const [strike, s] of [...perStrike.entries()].sort((a, b) => a[0] - b[0])) {
-    if (s.ivs.length < 3) continue;
-    const dir = barrierDir.get(strike) ? 'UP↑' : 'DN↓';
-    const t = linSlope(s.taus, s.ivs);
-    const midNow = s.mids[s.mids.length - 1];
-    console.log(
-      col(`$${strike}`, 10) + col(dir, 5) +
-      col(mean(s.ivs).toFixed(3), 8) + col(stdDev(s.ivs).toFixed(4), 8) +
-      col((t >= 0 ? '+' : '') + t.toFixed(4), 10) +
-      col(s.ivs.length, 5) +
-      (midNow * 100).toFixed(1) + '%'
+      `SD:${bestSD.H.toFixed(2)} RMSE:${rmseStr} Trend:${trendStr}` +
+      ` [${tauMin.toFixed(1)}-${tauMax.toFixed(1)}d] ${mktData.length}strikes ${isLive ? 'LIVE' : 'exp'}`
     );
   }
 
-  return { bestH: bestSD.H, bestTrend: bestTrend.H, bestRmse: bestRmse?.H };
+  return {
+    slug, optType, isLive,
+    tauMin, tauMax,
+    nStrikes: mktData.length,
+    nPts: dataset.length,
+    bestSD:    bestSD.H,
+    bestRmse:  bestRmse?.H ?? null,
+    bestTrend: bestTrend.H,
+    trendAtBestSD: bestSD.avgTrend,
+    avgIvAtBestSD: bestSD.avgIv,
+    sdAtBestSD:    bestSD.avgSD,
+    rmseAt50:   results.find(r => r.H === 0.50)?.predRmse ?? null,
+    rmseAt65:   results.find(r => r.H === 0.65)?.predRmse ?? null,
+    results,
+  };
 }
 
-// ─── Entry point ─────────────────────────────────────────────────────────────
+// ─── Cross-event summary ──────────────────────────────────────────────────────
+
+function printCrossSummary(allRes) {
+  console.log('\n' + '═'.repeat(90));
+  console.log('  CROSS-EVENT SUMMARY');
+  console.log('═'.repeat(90));
+
+  // Separate by type
+  const above = allRes.filter(r => r.optType === 'above');
+  const hit   = allRes.filter(r => r.optType === 'hit');
+
+  for (const [label, group] of [['ABOVE (European binary)', above], ['HIT (one-touch barrier)', hit]]) {
+    if (group.length === 0) continue;
+    console.log(`\n── ${label} ──`);
+    console.log(
+      col('Event', 38) + col('τ range', 12) + col('H*(SD)', 8) + col('H*(RMSE)', 10) +
+      col('Trend@H*', 10) + col('RMSE H=0.50', 12) + col('RMSE H=0.65', 12) + 'Status'
+    );
+    console.log('─'.repeat(102));
+
+    for (const r of group) {
+      const tauStr = `${r.tauMin.toFixed(1)}-${r.tauMax.toFixed(1)}d`;
+      const trend  = (r.trendAtBestSD >= 0 ? '+' : '') + r.trendAtBestSD.toFixed(3);
+      const r50    = r.rmseAt50 != null ? r.rmseAt50.toFixed(4) : '   n/a';
+      const r65    = r.rmseAt65 != null ? r.rmseAt65.toFixed(4) : '   n/a';
+      console.log(
+        col(r.slug.slice(-36), 38) + col(tauStr, 12) +
+        col(r.bestSD.toFixed(2), 8) + col(r.bestRmse?.toFixed(2) ?? 'n/a', 10) +
+        col(trend, 10) + col(r50, 12) + col(r65, 12) +
+        (r.isLive ? 'LIVE' : 'exp')
+      );
+    }
+
+    // Aggregate stats
+    const sdVals   = group.map(r => r.bestSD);
+    const rmseVals = group.filter(r => r.bestRmse != null).map(r => r.bestRmse);
+    console.log('─'.repeat(102));
+    console.log(`  Median H* by StdDev: ${median(sdVals).toFixed(2)}  |  Median H* by RMSE: ${rmseVals.length > 0 ? median(rmseVals).toFixed(2) : 'n/a'}`);
+  }
+
+  // Trend interpretation guide
+  console.log('\nTrend direction guide:');
+  console.log('  Negative → IV rises approaching expiry → model decays too FAST → raise H');
+  console.log('  Positive → IV falls approaching expiry → model decays too SLOW → lower H');
+  console.log('  Near zero → ✓ model time-decay matches market\n');
+
+  // H recommendation
+  const allSD = allRes.map(r => r.bestSD);
+  const allRM = allRes.filter(r => r.bestRmse != null).map(r => r.bestRmse);
+  console.log('Overall recommendation across all events:');
+  console.log(`  Best H by StdDev stability: median = ${median(allSD).toFixed(2)}`);
+  if (allRM.length > 0) console.log(`  Best H by OOS prediction:   median = ${median(allRM).toFixed(2)}`);
+  console.log(`  App current default: 0.65`);
+}
+
+function median(arr) {
+  const s = [...arr].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 === 0 ? (s[m - 1] + s[m]) / 2 : s[m];
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const slug = process.argv[2];
-  const days = parseInt(process.argv[3] ?? '7', 10);
+  const args = process.argv.slice(2);
+  const mode = args[0];
 
-  console.log('\n' + '═'.repeat(68));
+  console.log('\n' + '═'.repeat(70));
   console.log('   H EXPONENT ANALYSIS — Polymarket binary/barrier options');
-  console.log('═'.repeat(68));
-  console.log(`\nMetrics:`);
-  console.log(`  StdDev  — std dev of IV across time (lower = more stable)`)
-  console.log(`  Trend   — dIV/d(tauDays); near-zero = model time-decay matches market`);
-  console.log(`  PredRMSE— out-of-sample: calibrate on early half, predict late half`);
+  console.log('═'.repeat(70));
 
-  if (slug) {
-    await analyzeEvent(slug, days);
-  } else {
-    // Run both events
-    console.log('\nNo slug provided — running both January and February 2026 events.\n');
+  // Batch modes
+  if (mode === '--above' || mode === '--hit' || mode === '--all') {
+    const daysArg = args[1] ? parseInt(args[1]) : undefined;
+    const slugs = mode === '--above' ? ABOVE_SLUGS
+                : mode === '--hit'   ? HIT_SLUGS
+                : [...ABOVE_SLUGS, ...HIT_SLUGS];
 
-    const jan = await analyzeEvent('what-price-will-bitcoin-hit-in-january-2026', days);
-    const feb = await analyzeEvent('what-price-will-bitcoin-hit-in-february-2026', days);
+    console.log(`\nBatch mode: ${mode} | ${slugs.length} events | days=${daysArg ?? 'auto'}\n`);
+    const allResults = [];
 
-    console.log('\n' + '═'.repeat(68));
-    console.log('  SUMMARY');
-    console.log('═'.repeat(68));
-    if (jan) console.log(`January  (expired): best H=${jan.bestH} (StdDev), ${jan.bestTrend} (Trend), ${jan.bestRmse ?? 'n/a'} (RMSE)`);
-    if (feb) console.log(`February (live):    best H=${feb.bestH} (StdDev), ${feb.bestTrend} (Trend), ${feb.bestRmse ?? 'n/a'} (RMSE)`);
-    if (jan && feb && jan.bestH === feb.bestH) {
-      console.log(`\n✓ Both events agree: optimal H ≈ ${jan.bestH}`);
-    } else if (jan && feb) {
-      const avg = ((jan.bestH + feb.bestH) / 2).toFixed(2);
-      console.log(`\nEvents disagree: ${jan.bestH} vs ${feb.bestH}. Midpoint = ${avg}`);
-      console.log(`This suggests H is event/duration dependent — use the slider to tune per-event.`);
+    for (const slug of slugs) {
+      const res = await analyzeEvent(slug, daysArg, false);  // compact output
+      if (res) allResults.push(res);
+      await sleep(500);
     }
-    console.log('');
+
+    if (allResults.length > 0) printCrossSummary(allResults);
+    return;
   }
+
+  // Single event (or default hit pair)
+  if (!mode || mode.startsWith('what-price') || mode.startsWith('bitcoin-above')) {
+    const slug = mode || null;
+    const days = args[1] ? parseInt(args[1]) : 7;
+
+    if (slug) {
+      await analyzeEvent(slug, days, true);
+    } else {
+      // Default: run both hit events
+      console.log('\nNo args — running January & February hit events.\n');
+      const allResults = [];
+      for (const s of HIT_SLUGS) {
+        const r = await analyzeEvent(s, days, true);
+        if (r) allResults.push(r);
+      }
+      if (allResults.length > 1) printCrossSummary(allResults);
+    }
+    return;
+  }
+
+  console.log(`\nUsage: node scripts/analyze_h.mjs [slug|--above|--hit|--all] [days]`);
 }
 
-main().catch(e => { console.error('\nFailed:', e.message, e.stack); process.exit(1); });
+main().catch(e => { console.error('\nFailed:', e.message); process.exit(1); });
