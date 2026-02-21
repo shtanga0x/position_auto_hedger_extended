@@ -94,10 +94,10 @@ export function runOptimization(
       const polyQty = bybitProfitAtStrike / noAskPrice;
       if (polyQty <= 0) continue;
 
-      // Build P&L grid over [0.8*K, 1.2*K]
+      // Build P&L grid over ±20% around current spot price
       const K = market.strikePrice;
-      const lower = 0.8 * K;
-      const upper = 1.2 * K;
+      const lower = 0.8 * spotPrice;
+      const upper = 1.2 * spotPrice;
       const step = (upper - lower) / (NUM_GRID - 1);
 
       let feasible = true;
@@ -152,9 +152,9 @@ export function runOptimization(
         return count > 0 ? sum / count : 0;
       };
 
-      const avgPnl5 = avgInRange(0.95 * K, 1.05 * K);
-      const avgPnl10 = avgInRange(0.90 * K, 1.10 * K);
-      const avgPnl20 = avgInRange(0.80 * K, 1.20 * K);
+      const avgPnl5 = avgInRange(0.95 * spotPrice, 1.05 * spotPrice);
+      const avgPnl10 = avgInRange(0.90 * spotPrice, 1.10 * spotPrice);
+      const avgPnl20 = avgInRange(0.80 * spotPrice, 1.20 * spotPrice);
 
       const match: OptMatchResult = {
         instrument: inst,

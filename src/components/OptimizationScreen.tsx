@@ -12,6 +12,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Slider,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { ArrowBack, BarChart } from '@mui/icons-material';
@@ -44,6 +45,7 @@ interface OptimizationScreenProps {
 interface VizSelection {
   strikeResult: StrikeOptResult;
   match: OptMatchResult;
+  range: '5' | '10' | '20';
 }
 
 /** Chart visualization for a selected poly + bybit match */
@@ -70,6 +72,35 @@ function VizCard({
   const { polyQty, noAskPrice, bybitAsk, bybitFee, instrument, ticker } = match;
   const isDark = useTheme().palette.mode === 'dark';
 
+  // Step size based on asset price magnitude
+  const priceStep = spotPrice > 10000 ? 500 : spotPrice > 1000 ? 50 : 5;
+
+  // Wide slider bounds covering all three prices with ample padding
+  const sliderBounds = useMemo((): [number, number] => {
+    const prices = [market.strikePrice, instrument.strike, spotPrice];
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
+    const pad = Math.max((maxP - minP) * 0.50, spotPrice * 0.30);
+    return [
+      Math.floor((minP - pad) / priceStep) * priceStep,
+      Math.ceil((maxP + pad) / priceStep) * priceStep,
+    ];
+  }, [market.strikePrice, instrument.strike, spotPrice, priceStep]);
+
+  // Initial chart price range covers all three prices with ±20% padding
+  const [priceRange, setPriceRange] = useState<[number, number]>(() => {
+    const prices = [market.strikePrice, instrument.strike, spotPrice];
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
+    const pad = Math.max((maxP - minP) * 0.20, spotPrice * 0.12);
+    return [
+      Math.floor((minP - pad) / priceStep) * priceStep,
+      Math.ceil((maxP + pad) / priceStep) * priceStep,
+    ];
+  });
+
+  const [hDelta, setHDelta] = useState(0.00);
+
   const polyPos: PolymarketPosition = useMemo(() => ({
     marketId: market.id,
     question: market.question,
@@ -94,11 +125,6 @@ function VizCard({
     entryFee: bybitFee,
   }), [instrument, ticker, bybitAsk, bybitFee]);
 
-  const priceRange = useMemo((): [number, number] => {
-    const K = market.strikePrice;
-    return [Math.round(K * 0.75), Math.round(K * 1.30)];
-  }, [market.strikePrice]);
-
   const nowTs = useMemo(() => Math.floor(Date.now() / 1000), []);
   const polyTauNow = Math.max((polyExpiryTs - nowTs) / (365.25 * 24 * 3600), 0);
 
@@ -110,7 +136,7 @@ function VizCard({
     polyTauNow,
     polyExpiryTs,
     optionType,
-    deltaH: 0,
+    deltaH: hDelta,
     smile: smile.length > 0 ? smile : undefined,
     bybitSmile: bybitSmile.length > 0 ? bybitSmile : undefined,
     numPoints: 500,
@@ -148,7 +174,7 @@ function VizCard({
             Eval in {evalDays}d ({match.tauPolyRem > 0 ? `poly: ${(match.tauPolyRem * 365.25).toFixed(1)}d rem` : 'bybit: ' + (match.tauBybitRem * 365.25).toFixed(1) + 'd rem'})
           </Typography>
           <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600 }}>
-            Avg P&L ±5%: +${match.avgPnl5.toFixed(2)} &nbsp;|&nbsp; ±10%: +${match.avgPnl10.toFixed(2)} &nbsp;|&nbsp; ±20%: +${match.avgPnl20.toFixed(2)}
+            Avg P&amp;L ±5%: +${match.avgPnl5.toFixed(2)} &nbsp;|&nbsp; ±10%: +${match.avgPnl10.toFixed(2)} &nbsp;|&nbsp; ±20%: +${match.avgPnl20.toFixed(2)}
           </Typography>
         </Box>
       </Paper>
@@ -173,6 +199,43 @@ function VizCard({
             <Typography variant="body2">Computing curves...</Typography>
           </Box>
         )}
+      </Paper>
+
+      {/* Price range slider */}
+      <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px' }}>
+        <Typography variant="caption" sx={{ color: 'rgba(139, 157, 195, 0.7)', display: 'block', mb: 1.5 }}>
+          Price range: ${priceRange[0].toLocaleString()} — ${priceRange[1].toLocaleString()}
+        </Typography>
+        <Slider
+          value={priceRange}
+          onChange={(_, v) => setPriceRange(v as [number, number])}
+          min={sliderBounds[0]}
+          max={sliderBounds[1]}
+          step={priceStep}
+          valueLabelDisplay="auto"
+          valueLabelFormat={(v) => `$${(v as number).toLocaleString()}`}
+          sx={{ color: '#4A90D9' }}
+        />
+      </Paper>
+
+      {/* H exponent offset slider */}
+      <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px' }}>
+        <Typography variant="caption" sx={{ color: 'rgba(139, 157, 195, 0.7)', display: 'block', mb: 1.5 }}>
+          {'ΔH offset: '}{hDelta >= 0 ? '+' : ''}{hDelta.toFixed(2)}
+          {' · >7d: H='}{autoH(10 / 365.25, hDelta).toFixed(2)}
+          {' | 3–7d: H='}{autoH(5 / 365.25, hDelta).toFixed(2)}
+          {' | <3d: H='}{autoH(1 / 365.25, hDelta).toFixed(2)}
+        </Typography>
+        <Slider
+          value={hDelta}
+          onChange={(_, v) => setHDelta(v as number)}
+          min={-0.20}
+          max={0.20}
+          step={0.01}
+          valueLabelDisplay="auto"
+          valueLabelFormat={(v) => (v >= 0 ? '+' : '') + (v as number).toFixed(2)}
+          sx={{ color: '#A78BFA' }}
+        />
       </Paper>
     </Box>
   );
@@ -232,9 +295,9 @@ export function OptimizationScreen({
     return points.sort((a, b) => a.moneyness - b.moneyness);
   }, [bybitChain, spotPrice]);
 
-  const handleViz = useCallback((strikeResult: StrikeOptResult, match: OptMatchResult) => {
+  const handleViz = useCallback((strikeResult: StrikeOptResult, match: OptMatchResult, range: '5' | '10' | '20') => {
     setVizSelection(prev =>
-      prev?.match === match ? null : { strikeResult, match }
+      (prev?.match === match && prev?.range === range) ? null : { strikeResult, match, range }
     );
   }, []);
 
@@ -259,7 +322,9 @@ export function OptimizationScreen({
 
     const { instrument, polyQty, noAskPrice, bybitAsk, bybitFee, avgPnl5, avgPnl10, avgPnl20 } = match;
     const avgPnl = range === '5' ? avgPnl5 : range === '10' ? avgPnl10 : avgPnl20;
-    const isSelected = vizSelection?.match === match;
+    const totalCost = polyQty * noAskPrice + bybitAsk * 0.01 + bybitFee;
+    const pct = totalCost > 0 ? (avgPnl / totalCost) * 100 : 0;
+    const isSelected = vizSelection?.match === match && vizSelection?.range === range;
 
     return (
       <TableCell sx={{ verticalAlign: 'top' }}>
@@ -279,11 +344,11 @@ export function OptimizationScreen({
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.75 }}>
             <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600, fontSize: '0.78rem' }}>
-              Avg ±{range}%: +${avgPnl.toFixed(2)}
+              Avg ±{range}%: +${avgPnl.toFixed(2)} (+{pct.toFixed(1)}%)
             </Typography>
             <IconButton
               size="small"
-              onClick={() => handleViz(strikeResult, match)}
+              onClick={() => handleViz(strikeResult, match, range)}
               sx={{
                 ml: 'auto', p: 0.5,
                 color: isSelected ? '#00D1FF' : 'text.secondary',
