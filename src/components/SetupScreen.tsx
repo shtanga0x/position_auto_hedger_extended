@@ -1,5 +1,5 @@
 import { Box, Typography, Paper, Button } from '@mui/material';
-import { ShowChart } from '@mui/icons-material';
+import { TravelExplore } from '@mui/icons-material';
 import type { CryptoOption, OptionType, ParsedMarket, PolymarketEvent, BybitOptionChain as BybitChainType } from '../types';
 import { PolymarketPanel } from './PolymarketPanel';
 import { BybitOptionChain } from './BybitOptionChain';
@@ -21,7 +21,8 @@ export function SetupScreen({
   onBybitSpotPriceLoaded,
   onContinue,
 }: SetupScreenProps) {
-  const canContinue = polyEvent !== null || bybitChain !== null;
+  // Require both sources for optimization
+  const canContinue = polyEvent !== null && bybitChain !== null;
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', p: 3, gap: 3, position: 'relative', overflow: 'hidden' }}>
@@ -37,17 +38,17 @@ export function SetupScreen({
           background: 'linear-gradient(135deg, #00D1FF 0%, #00A3CC 100%)',
           mb: 2, boxShadow: '0 8px 32px rgba(0, 209, 255, 0.3)',
         }}>
-          <ShowChart sx={{ fontSize: 32, color: '#0A0E17' }} />
+          <TravelExplore sx={{ fontSize: 32, color: '#0A0E17' }} />
         </Box>
         <Typography variant="h4" sx={{
           fontWeight: 700,
           background: 'linear-gradient(90deg, #E8EDF5 0%, #00D1FF 100%)',
           backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
         }}>
-          Grapher V3
+          Grapher V4
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Combined Polymarket + Bybit portfolio P&L projection
+          Find optimal Bybit hedges for each Polymarket strike
         </Typography>
       </Box>
 
@@ -64,7 +65,7 @@ export function SetupScreen({
         />
       </Paper>
 
-      {/* Continue button */}
+      {/* Run Optimization button */}
       <Box sx={{ textAlign: 'center', position: 'relative', zIndex: 1, pb: 3 }}>
         <Button
           variant="contained"
@@ -76,11 +77,11 @@ export function SetupScreen({
             background: canContinue ? 'linear-gradient(135deg, #00D1FF 0%, #00A3CC 100%)' : undefined,
           }}
         >
-          Continue to Chart
+          Run Optimization
         </Button>
         {!canContinue && (
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            Load a Polymarket event or select a Bybit expiry to continue
+            Load a Polymarket event and select a Bybit expiry to continue
           </Typography>
         )}
       </Box>

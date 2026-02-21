@@ -1,198 +1,123 @@
-# Grapher V3 — Polymarket + Bybit Options P&L Visualizer
+# Grapher V4 — Polymarket + Bybit Options Optimizer
 
-**Live:** [shtanga0x.github.io/grapher_v3](https://shtanga0x.github.io/grapher_v3/)
+**Live:** [shtanga0x.github.io/grapher_v4](https://shtanga0x.github.io/grapher_v4/)
 
-A browser-based portfolio tool that combines **Polymarket binary options** (crypto price events) with **Bybit vanilla options** into a single projected P&L chart. It calibrates implied volatility from live market prices, projects value across different price levels and time horizons, and renders interactive charts with dynamic % labels.
-
----
-
-## What's New in V3 vs V2
-
-| Feature | V2 | V3 |
-|---------|----|----|
-| Bybit vanilla options (calls/puts) | ✗ | ✓ |
-| Combined Polymarket + Bybit portfolio | ✗ | ✓ |
-| IV smile for Bybit option chain | ✗ | ✓ |
-| Corrected normalCDF (A&S 26.2.17) | ✗ | ✓ |
-| Time-snapshot labels based on actual expiry dates | ✗ | ✓ |
-| Tooltip % change labels per curve | ✗ | ✓ |
-| Expiry dates in UTC+1 in strike panels | ✗ | ✓ |
-| H default value | 0.50 | auto (0.50/0.60/0.65 by τ) |
-
----
+A browser-based optimization tool that automatically finds the best Bybit vanilla option to hedge each Polymarket crypto event strike. It constructs a combined position where the Bybit option profit at the Polymarket strike offsets the Polymarket loss, then ranks all feasible hedges by average P&L in ±5%, ±10%, ±20% ranges.
 
 ## How It Works
 
-### 1. Setup Screen
+### 1. Setup
 
-Two independent data sources can be loaded simultaneously:
+Load a **Polymarket event URL** (crypto above/hit type) and select a **Bybit expiry** from the option chain. Both are required for the optimizer.
 
-**Polymarket** — paste a crypto event URL (e.g. `https://polymarket.com/event/bitcoin-above-100k-feb`). The app:
-- Extracts the slug and fetches event data via the Polymarket Gamma API (proxied through a Cloudflare Worker to bypass CORS)
-- Auto-detects the cryptocurrency (BTC, ETH, SOL, XRP) from the series metadata
-- Auto-detects option type — `"above"` (European binary) or `"hit"` (one-touch barrier)
-- Parses strike prices from each market's `groupItemTitle`
-- Fetches the current spot price from Binance
+The app auto-detects:
+- **Cryptocurrency** (BTC, ETH, SOL, XRP)
+- **Option type** (`above` = European binary, `hit` = one-touch barrier)
+- **Strike prices** from each market's `groupItemTitle`
+- **Current spot price** from Binance
 
-**Bybit** — select an expiry from the Bybit option chain. The app fetches all available calls and puts for that expiry, including mark price, bid/ask, delta, and markIv.
+### 2. Optimization
 
-### 2. Strike Selection
+For each Polymarket strike, the optimizer searches all matching Bybit options and finds the best hedge:
 
-**Polymarket** (1/3 column): select YES or NO for any strike, set quantity in contracts. Entry price = market YES price (YES side) or 1 − YES price (NO side).
+#### Direction
+- Strike > Spot → UP barrier → hedge with **CALL** options
+- Strike < Spot → DOWN barrier → hedge with **PUT** options
 
-**Bybit** (2/3 column): select buy or sell for any call or put at any strike, set quantity in BTC/ETH. Entry price = ask (buy) or bid (sell). Trading fees are computed and displayed.
+#### Bybit Quantity
+Fixed at **0.01 contracts** per hedge.
 
-Both sources can be used simultaneously to build a combined portfolio (e.g. long a Bybit call + short a Polymarket NO).
-
-### 3. Pricing Engine
-
-Full mathematical details are in [`docs/PRICING.md`](docs/PRICING.md).
-
-**Polymarket positions** use the generalized Black-Scholes binary/barrier pricing:
-- `"above"` — European binary: pays $1 if S ≥ K at expiry → priced as Φ(d₂)
-- `"hit"` — One-touch barrier: pays $1 if S ever touches K → reflection-principle formula
-- IV is calibrated per-strike from the live YES price using Brent's root-finding
-- Time scaling uses τ^H where H is auto-computed per snapshot by time-to-expiry (>7d→0.50, 3–7d→0.60, <3d→0.65) plus a user-adjustable ΔH offset
-
-**Bybit positions** use standard Black-Scholes vanilla call/put pricing:
-- `bsCall(S, K, σ, τ)` = S·Φ(d₁) − K·Φ(d₂)
-- `bsPut(S, K, σ, τ)` = K·Φ(−d₂) − S·Φ(−d₁)
-- IV is taken directly from Bybit's `markIv` field (annualized, 0–1 scale)
-
-**Normal CDF** uses the correct Abramowitz & Stegun 26.2.17 approximation with coefficients p = 0.2316419, b₁ = 0.319381530, …, b₅ = 1.330274429. Maximum error |ε| < 7.5 × 10⁻⁸. An earlier version (pre-v3.0.1) used wrong coefficients (p = 0.3275911 from a different formula family), causing BS prices to be off by $700–$1200 near the strike and producing a visible kink/elbow in the P&L curve at the strike price — fixed in v3.0.1.
-
-### 4. IV Smile (Sticky-Moneyness)
-
-Both Polymarket and Bybit builds have an independent IV smile:
-
-**Polymarket smile** — built from all market strikes at the current spot. When projecting at a different spot S', the moneyness `ln(S'/K)` is recomputed and IV is linearly interpolated from the smile (flat extrapolation at edges). This eliminates the sticky-strike artifact.
-
-**Bybit smile** — built from the full option chain's `markIv` values. When projecting at different spot levels, the vol smile follows sticky-moneyness, producing a smooth curve instead of the kinked constant-IV shape.
-
-### 5. Time Snapshots
-
-The chart shows 4 snapshot curves. Labels and timestamps adapt based on which sources are active:
-
-**Single source (Poly or Bybit only):**
-- Now (Xd Yh to exp)
-- 1/3 to expiry
-- 2/3 to expiry
-- At expiry
-
-**Both sources active:**
-- Now (time to earlier expiry shown)
-- ½ to earlier expiry
-- At earlier expiry ("Options" or "Event")
-- At later expiry ("Options" or "Event")
-
-### 6. P&L Formula
+#### Poly Quantity (Derived from Hedge Constraint)
+The Polymarket position (NO side) is sized so that at the strike price:
 
 ```
-P&L(S') = Σ projectedValue_i(S') − Σ entryPrice_i
+Poly loss (at strike) + Bybit profit (at strike) = 0
 
-Polymarket YES:  projectedValue = priceOptionYes(S', K, IV(S',K), τ, …)
-Polymarket NO:   projectedValue = 1 − priceOptionYes(…)
-Bybit buy:       projectedValue = bsPrice(S', K, IV(S',K), τ, type)
-Bybit sell:      projectedValue = −bsPrice(…)
+polyQty = bybitProfit_at_strike / noAskPrice
+
+where:
+  bybitProfit_at_strike = (bsPrice(K_poly, K_bybit, markIv, τ_bybit_rem) - bybitAsk) × 0.01 − fee
+  noAskPrice = 1 − YES_bid  (cost to buy NO at market)
 ```
 
-Plus fees: `entryFee = 0.0006 × max(entryPremium, 0.1% × notional)`.
+When the Polymarket barrier is hit (spot reaches `K_poly`), the NO position goes to zero — the loss is exactly offset by the Bybit option profit.
 
-### 7. Chart Features
+#### Evaluation Time
+Both positions are evaluated at the **earlier of the two expiries**:
+- `τ_eval = min(τ_poly, τ_bybit)`
+- At evaluation: `τ_poly_rem = τ_poly − τ_eval`, `τ_bybit_rem = τ_bybit − τ_eval`
+- One of these will be zero (the position at its expiry)
 
-- **Green/red split lines** — positive P&L segments in green, negative in red, with bridging at sign changes
-- **Combined curves** (solid→dashed) for time snapshots
-- **Poly overlay** (blue) — Poly-only Now and Expiry curves when both sources are active
-- **Bybit overlay** (orange) — Bybit-only Now and Expiry curves
-- **Interactive legend** — click any item to toggle visibility
-- **Hover tooltip** — shows P&L at hovered price for all visible curves, plus relative % change vs reference curve:
-  - Snapshot curves (1/3, 2/3, Expiry): Δ% vs Now, relative to total entry cost
-  - Poly Expiry: Δ% vs Poly Now
-  - Bybit Expiry: Δ% vs Bybit Now
-  - Now / Poly Now / Bybit Now: absolute value only (reference points, no Δ%)
-- **Spot price reference line** (vertical dashed)
-- **Zero P&L reference line** (horizontal dashed)
-- **Price range slider** — adjusts the X-axis window
-- **H offset slider** — tunes Polymarket time scaling via ΔH offset (range −0.20 to +0.20, default 0.00). H is auto-assigned per snapshot by time-to-expiry: >7d→0.50, 3–7d→0.60, <3d→0.65. ΔH shifts all tiers uniformly.
+#### Feasibility Check
+A combination is feasible only if the combined P&L is **non-negative at every price point** in the ±20% range around the Polymarket strike. 200 evenly-spaced grid points are checked.
 
----
+#### Scoring
+Feasible options are ranked by average combined P&L in three ranges:
+| Column | Range | Score |
+|--------|-------|-------|
+| Best ±5% | `[0.95K, 1.05K]` | Mean P&L in range |
+| Best ±10% | `[0.90K, 1.10K]` | Mean P&L in range |
+| Best ±20% | `[0.80K, 1.20K]` | Mean P&L in range |
 
-## H Exponent Empirical Analysis
+### 3. Optimization Table
 
-The `H` parameter replaces standard √τ time scaling with τ^H. For short-dated options (τ < 1 year), larger H → smaller uncertainty term → faster convergence to 0 or 1.
+The second screen shows a 4-column table:
 
-Analysis script: `scripts/analyze_h.mjs` — tests H ∈ [0.40, 0.80] across 17 Polymarket BTC events using out-of-sample prediction RMSE (calibrate IV on early half of data, predict late half).
+| Poly Strike | Best ±5% | Best ±10% | Best ±20% |
+|-------------|----------|-----------|-----------|
+| ↑ $100,000 — NO ask: 0.9840 | BTC-27FEB26-95000-C — buy ×0.01 @ $205 ($2.05, fee: $0.14) / Poly: NO ×2.35 @ 0.984 ($2.31) / Avg ±5%: +$0.42 | ... | ... |
 
-### Events analyzed
+The `—` symbol is shown if no feasible hedge exists for that range.
 
-| Group | Events | Date range |
-|-------|--------|------------|
-| ABOVE (daily binary, ~24h) | 12 events | Feb 13–24 2026 |
-| HIT monthly (one-touch, ~30d window) | 2 events | Jan + Feb 2026 |
-| HIT weekly (one-touch, 7d) | 3 events | Feb 2–8, 9–15, 16–22 2026 |
+### 4. P&L Visualization
 
-### Results: HIT vs ABOVE
+Click the **chart icon** in any cell to render the combined P&L chart for that pair:
+- **Combined curves**: 4 time snapshots (Now, ½ to earlier expiry, at earlier expiry, at later expiry)
+- **Overlay curves**: Polymarket-only (blue) and Bybit-only (orange)
+- **Green/red split**: positive P&L in green, negative in red
+- **Dual Y-axes**: left = P&L ($), right = P&L (%)
 
-Weekly HIT events split by week-phase at τ = 3.5 days:
+### 5. Pricing Engine
 
-| Type | Phase | Tau range | Median H* (OOS RMSE) |
-|------|-------|-----------|----------------------|
-| HIT | Early (start of week) | 3.5 – 7 d | **0.60** |
-| HIT | Late (near expiry) | 0 – 3.5 d | **0.65** |
-| ABOVE | — | 0 – 1 d | **0.55 – 0.65** |
+Uses the same engine as Grapher V2 and V3:
 
-### Interpretation
-
-- **App default H = 0.65 is well-supported for near-expiry HIT positions and all ABOVE positions.**
-- For early-week HIT entries (4–7 days to expiry), H = 0.55–0.60 would improve model accuracy.
-- The StdDev metric is biased — it always selects H = 0.40 regardless of type. Use PredRMSE.
-- Full-window RMSE can be inflated by mass-expiry events (all barriers resolve at 0/1 trivially).
-- Bybit vanilla options must use H = 0.50 (market convention).
-
-Full mathematical details and the complete results table are in [`docs/PRICING.md`](docs/PRICING.md#time-scaling-exponent-h).
-
----
+- **Polymarket `hit` type**: one-touch barrier formula with auto-H time scaling
+- **Bybit options**: standard Black-Scholes (`bsCallPrice` / `bsPutPrice`)
+- **Auto-H tiers**: τ > 7d → H=0.50, 3–7d → H=0.60, ≤3d → H=0.65
+- **IV smile**: sticky-moneyness interpolation for chart curves
 
 ## Architecture
 
 ```
 src/
 ├── api/
-│   ├── binance.ts            # Spot price from Binance API
-│   ├── bybit.ts              # Bybit option chain (instruments + tickers)
-│   ├── config.ts             # API base URLs
-│   └── polymarket.ts         # Event fetch, slug parsing, auto-detection
+│   ├── binance.ts           # Spot price from Binance
+│   ├── bybit.ts             # Bybit option chain + tickers
+│   ├── config.ts            # API base URLs (worker proxy)
+│   └── polymarket.ts        # Event fetch, strike/crypto/type detection
 ├── components/
-│   ├── SetupScreen.tsx        # URL input, Bybit expiry selector
-│   ├── BybitOptionChain.tsx   # Bybit expiry selection UI
-│   ├── PolymarketPanel.tsx    # Polymarket URL/event loading UI
-│   ├── ChartScreen.tsx        # Strike tables, positions summary, chart integration
-│   └── ProjectionChart.tsx    # Recharts chart: split lines, legend, tooltip, dual axes
+│   ├── SetupScreen.tsx       # URL input + Bybit expiry selector
+│   ├── OptimizationScreen.tsx # Table + chart visualization
+│   ├── PolymarketPanel.tsx   # Polymarket URL input panel
+│   ├── BybitOptionChain.tsx  # Bybit expiry selector
+│   └── ProjectionChart.tsx  # Recharts chart (shared with v3)
 ├── hooks/
-│   └── usePortfolioCurves.ts  # Memoized portfolio curve computation for all snapshots
+│   └── usePortfolioCurves.ts # Combined P&L curves (shared with v3)
+├── optimization/
+│   └── optimizer.ts          # Core optimization engine
 ├── pricing/
-│   └── engine.ts              # normalCDF (A&S 26.2.17), BS call/put, binary/barrier
-│                              #   pricing, IV solver (Brent's), smile interpolation,
-│                              #   combined P&L curve, Bybit fee calculation
-├── types/
-│   └── index.ts               # TypeScript interfaces
-└── App.tsx                    # Screen routing
-worker/
-└── src/index.ts               # Cloudflare Worker (CORS proxy for Polymarket API)
-docs/
-└── PRICING.md                 # Full mathematical documentation
+│   └── engine.ts             # Pricing math (shared with v2/v3)
+└── types/
+    └── index.ts              # TypeScript interfaces (+ OptMatchResult, StrikeOptResult)
 ```
-
----
 
 ## Tech Stack
 
 - **React 19** + **TypeScript** + **Vite**
-- **Material UI (MUI)** — components and dark theming
-- **Recharts** — charting library
-- **Cloudflare Workers** — CORS proxy for Polymarket API
-
----
+- **Material UI (MUI)** — components and theming
+- **Recharts** — chart rendering
+- **Axios** — HTTP client
+- **Cloudflare Workers** — API proxy (CORS bypass for Polymarket)
 
 ## Development
 
@@ -201,12 +126,8 @@ npm install
 npm run dev
 ```
 
-Requires `VITE_WORKER_URL` environment variable pointing to the Cloudflare Worker proxy (see [`worker/README.md`](worker/README.md)).
-
-The Bybit API is proxied through the local Vite dev server (`/api/bybit` → `https://api.bybit.com`). No additional secrets needed for Bybit.
+Requires `VITE_WORKER_URL` environment variable pointing to the Cloudflare Worker proxy.
 
 ## Deployment
 
-Deployed to GitHub Pages via `.github/workflows/deploy.yml` on push to `main`. Uses Node 22, `npm ci`, `npm run build`, and the `actions/deploy-pages` action.
-
-The app version is injected at build time from `package.json` via Vite's `define` and displayed as a small version tag at the bottom of both screens.
+Deployed to GitHub Pages via `.github/workflows/deploy.yml` on push to `main`.

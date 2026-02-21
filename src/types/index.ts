@@ -116,3 +116,29 @@ export interface BybitPosition {
 export interface PolymarketPosition extends SelectedStrike {
   quantity: number;
 }
+
+// --- Optimization types ---
+
+export interface OptMatchResult {
+  instrument: BybitInstrument;
+  ticker: BybitTicker;
+  polyQty: number;       // Polymarket NO quantity derived from hedge constraint
+  noAskPrice: number;    // Entry price for Polymarket NO position
+  bybitAsk: number;      // Bybit ask price at entry
+  bybitFee: number;      // Entry fee for bybit position (total, already × qty)
+  avgPnl5: number;       // Average combined P&L in ±5% range
+  avgPnl10: number;      // Average combined P&L in ±10% range
+  avgPnl20: number;      // Average combined P&L in ±20% range
+  tauPolyRem: number;    // Poly time-to-expiry remaining at evaluation (years)
+  tauBybitRem: number;   // Bybit time-to-expiry remaining at evaluation (years)
+  tauEval: number;       // Time until evaluation point from now (years)
+}
+
+export interface StrikeOptResult {
+  market: ParsedMarket;
+  isUpBarrier: boolean;
+  polyIv: number;        // Calibrated IV for this poly strike at current spot
+  best5: OptMatchResult | null;   // Best match ranked by avgPnl5
+  best10: OptMatchResult | null;  // Best match ranked by avgPnl10
+  best20: OptMatchResult | null;  // Best match ranked by avgPnl20
+}

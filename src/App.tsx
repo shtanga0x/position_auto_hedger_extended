@@ -3,10 +3,10 @@ import { ThemeProvider, CssBaseline, Box, IconButton } from '@mui/material';
 import { DarkMode, LightMode } from '@mui/icons-material';
 import { darkTheme, lightTheme } from './theme';
 import { SetupScreen } from './components/SetupScreen';
-import { ChartScreen } from './components/ChartScreen';
+import { OptimizationScreen } from './components/OptimizationScreen';
 import type { CryptoOption, OptionType, ParsedMarket, PolymarketEvent, BybitOptionChain as BybitChainType } from './types';
 
-type Screen = 'setup' | 'chart';
+type Screen = 'setup' | 'optimize';
 
 function App() {
   const [screen, setScreen] = useState<Screen>('setup');
@@ -44,7 +44,7 @@ function App() {
   }, []);
 
   const handleContinue = useCallback(() => {
-    setScreen('chart');
+    setScreen('optimize');
   }, []);
 
   const handleBack = useCallback(() => {
@@ -78,8 +78,8 @@ function App() {
             onContinue={handleContinue}
           />
         )}
-        {screen === 'chart' && (
-          <ChartScreen
+        {screen === 'optimize' && (
+          <OptimizationScreen
             polyEvent={polyEvent}
             polyMarkets={polyMarkets}
             crypto={crypto}
