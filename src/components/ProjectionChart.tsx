@@ -176,12 +176,10 @@ function CustomTooltipContent({
 
   const absCost = Math.abs(totalEntryCost ?? 0);
 
-  // Compute % change relative to a reference PnL
-  function pctSuffix(pnl: number, refKey: string): string {
+  // Compute absolute P&L as % of entry cost
+  function absPct(pnl: number): string {
     if (absCost <= 0) return '';
-    const ref = valueMap.get(refKey);
-    if (ref == null) return '';
-    const pct = ((pnl - ref) / absCost) * 100;
+    const pct = (pnl / absCost) * 100;
     const sign = pct >= 0 ? '+' : '';
     return ` (${sign}${pct.toFixed(1)}%)`;
   }
@@ -202,41 +200,38 @@ function CustomTooltipContent({
       border: `1px solid ${tooltipBorder}`,
       borderRadius: 8,
       padding: '10px 14px',
-      maxWidth: 380,
+      maxWidth: 500,
     }}>
       <div style={{ color: secondaryColor, marginBottom: 6, fontSize: 15 }}>
         {cryptoSymbol}: ${cryptoPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({formatPct(pricePct)})
       </div>
 
-      {/* Combined curves — idx 0 is "Now" (no %), rest show delta vs Now */}
-      {combinedLabels.map((label, idx) => {
+      {/* Combined curves — all show absolute % */}
+      {combinedLabels.map((label) => {
         if (hiddenLines.has(label)) return null;
         const pnl = valueMap.get(label);
         if (pnl == null) return null;
         const color = pnl >= 0 ? GREEN : RED;
-        const suffix = idx === 0 ? undefined : pctSuffix(pnl, combinedLabels[0]);
-        return renderRow(label, pnl, color, lineStyles.get(label), color, suffix);
+        return renderRow(label, pnl, color, lineStyles.get(label), color, absPct(pnl));
       })}
 
-      {/* Poly overlay — Poly Now has no %, Poly Expiry shows delta vs Poly Now */}
+      {/* Poly overlay — both show absolute % */}
       {hasPolyOverlay && (
         <>
           {!hiddenLines.has(POLY_NOW) && valueMap.has(POLY_NOW) &&
-            renderRow(POLY_NOW, valueMap.get(POLY_NOW)!, POLY_BLUE, lineStyles.get(POLY_NOW))}
+            renderRow(POLY_NOW, valueMap.get(POLY_NOW)!, POLY_BLUE, lineStyles.get(POLY_NOW), undefined, absPct(valueMap.get(POLY_NOW)!))}
           {!hiddenLines.has(POLY_EXPIRY) && valueMap.has(POLY_EXPIRY) &&
-            renderRow(POLY_EXPIRY, valueMap.get(POLY_EXPIRY)!, POLY_BLUE, lineStyles.get(POLY_EXPIRY), undefined,
-              pctSuffix(valueMap.get(POLY_EXPIRY)!, POLY_NOW))}
+            renderRow(POLY_EXPIRY, valueMap.get(POLY_EXPIRY)!, POLY_BLUE, lineStyles.get(POLY_EXPIRY), undefined, absPct(valueMap.get(POLY_EXPIRY)!))}
         </>
       )}
 
-      {/* Bybit overlay — Bybit Now has no %, Bybit Expiry shows delta vs Bybit Now */}
+      {/* Bybit overlay — both show absolute % */}
       {hasBybitOverlay && (
         <>
           {!hiddenLines.has(BYBIT_NOW) && valueMap.has(BYBIT_NOW) &&
-            renderRow(BYBIT_NOW, valueMap.get(BYBIT_NOW)!, BYBIT_ORANGE, lineStyles.get(BYBIT_NOW))}
+            renderRow(BYBIT_NOW, valueMap.get(BYBIT_NOW)!, BYBIT_ORANGE, lineStyles.get(BYBIT_NOW), undefined, absPct(valueMap.get(BYBIT_NOW)!))}
           {!hiddenLines.has(BYBIT_EXPIRY) && valueMap.has(BYBIT_EXPIRY) &&
-            renderRow(BYBIT_EXPIRY, valueMap.get(BYBIT_EXPIRY)!, BYBIT_ORANGE, lineStyles.get(BYBIT_EXPIRY), undefined,
-              pctSuffix(valueMap.get(BYBIT_EXPIRY)!, BYBIT_NOW))}
+            renderRow(BYBIT_EXPIRY, valueMap.get(BYBIT_EXPIRY)!, BYBIT_ORANGE, lineStyles.get(BYBIT_EXPIRY), undefined, absPct(valueMap.get(BYBIT_EXPIRY)!))}
         </>
       )}
     </div>

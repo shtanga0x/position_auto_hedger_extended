@@ -564,7 +564,7 @@ export function ChartScreen({
                 </Typography>
                 {polyPositions.map((pos, i) => (
                   <Typography key={i} variant="h6" color="text.secondary" sx={{ fontWeight: 400 }}>
-                    {pos.groupItemTitle} — {pos.side} ×{pos.quantity} @ {pos.entryPrice.toFixed(4)}
+                    {pos.groupItemTitle} — {pos.side} ×{pos.quantity} @ {pos.entryPrice.toFixed(4)} (${(pos.entryPrice * pos.quantity).toFixed(2)})
                   </Typography>
                 ))}
               </Box>
@@ -576,7 +576,7 @@ export function ChartScreen({
                 </Typography>
                 {bybitPositions.map((pos, i) => (
                   <Typography key={i} variant="h6" color="text.secondary" sx={{ fontWeight: 400 }}>
-                    {pos.symbol} — {pos.side} ×{pos.quantity} @ ${pos.entryPrice.toFixed(2)} (fee: ${pos.entryFee.toFixed(2)})
+                    {pos.symbol} — {pos.side} ×{pos.quantity} @ ${pos.entryPrice.toFixed(2)} (${(pos.entryPrice * pos.quantity).toFixed(2)}, fee: ${pos.entryFee.toFixed(2)})
                   </Typography>
                 ))}
               </Box>
