@@ -44,8 +44,8 @@ export function runOptimization(
       ? (1 - market.bestBid)
       : (1 - market.currentPrice);
 
-    // Skip near-resolved markets (NO < 5 cents): polyQty = profit/noAsk would be astronomically large
-    if (noAskPrice < 0.05 || noAskPrice >= 1) continue;
+    // Skip near-resolved markets (NO < 1 cent): polyQty = profit/noAsk would be astronomically large
+    if (noAskPrice < 0.01 || noAskPrice >= 1) continue;
 
     // Calibrate poly implied vol at current tau with auto-H
     const hNow = autoH(tauPoly, 0);
