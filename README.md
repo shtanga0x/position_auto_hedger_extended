@@ -17,7 +17,7 @@ A browser-based portfolio tool that combines **Polymarket binary options** (cryp
 | Time-snapshot labels based on actual expiry dates | ✗ | ✓ |
 | Tooltip % change labels per curve | ✗ | ✓ |
 | Expiry dates in UTC+1 in strike panels | ✗ | ✓ |
-| H default value | 0.50 | 0.65 |
+| H default value | 0.50 | auto (0.50/0.60/0.65 by τ) |
 
 ---
 
@@ -52,7 +52,7 @@ Full mathematical details are in [`docs/PRICING.md`](docs/PRICING.md).
 - `"above"` — European binary: pays $1 if S ≥ K at expiry → priced as Φ(d₂)
 - `"hit"` — One-touch barrier: pays $1 if S ever touches K → reflection-principle formula
 - IV is calibrated per-strike from the live YES price using Brent's root-finding
-- Time scaling uses τ^H (Hurst-style exponent, default H = 0.65)
+- Time scaling uses τ^H where H is auto-computed per snapshot by time-to-expiry (>7d→0.50, 3–7d→0.60, <3d→0.65) plus a user-adjustable ΔH offset
 
 **Bybit positions** use standard Black-Scholes vanilla call/put pricing:
 - `bsCall(S, K, σ, τ)` = S·Φ(d₁) − K·Φ(d₂)
@@ -113,7 +113,43 @@ Plus fees: `entryFee = 0.0006 × max(entryPremium, 0.1% × notional)`.
 - **Spot price reference line** (vertical dashed)
 - **Zero P&L reference line** (horizontal dashed)
 - **Price range slider** — adjusts the X-axis window
-- **H exponent slider** — tunes Polymarket time scaling (range 0.40–0.80, default 0.65)
+- **H offset slider** — tunes Polymarket time scaling via ΔH offset (range −0.20 to +0.20, default 0.00). H is auto-assigned per snapshot by time-to-expiry: >7d→0.50, 3–7d→0.60, <3d→0.65. ΔH shifts all tiers uniformly.
+
+---
+
+## H Exponent Empirical Analysis
+
+The `H` parameter replaces standard √τ time scaling with τ^H. For short-dated options (τ < 1 year), larger H → smaller uncertainty term → faster convergence to 0 or 1.
+
+Analysis script: `scripts/analyze_h.mjs` — tests H ∈ [0.40, 0.80] across 17 Polymarket BTC events using out-of-sample prediction RMSE (calibrate IV on early half of data, predict late half).
+
+### Events analyzed
+
+| Group | Events | Date range |
+|-------|--------|------------|
+| ABOVE (daily binary, ~24h) | 12 events | Feb 13–24 2026 |
+| HIT monthly (one-touch, ~30d window) | 2 events | Jan + Feb 2026 |
+| HIT weekly (one-touch, 7d) | 3 events | Feb 2–8, 9–15, 16–22 2026 |
+
+### Results: HIT vs ABOVE
+
+Weekly HIT events split by week-phase at τ = 3.5 days:
+
+| Type | Phase | Tau range | Median H* (OOS RMSE) |
+|------|-------|-----------|----------------------|
+| HIT | Early (start of week) | 3.5 – 7 d | **0.60** |
+| HIT | Late (near expiry) | 0 – 3.5 d | **0.65** |
+| ABOVE | — | 0 – 1 d | **0.55 – 0.65** |
+
+### Interpretation
+
+- **App default H = 0.65 is well-supported for near-expiry HIT positions and all ABOVE positions.**
+- For early-week HIT entries (4–7 days to expiry), H = 0.55–0.60 would improve model accuracy.
+- The StdDev metric is biased — it always selects H = 0.40 regardless of type. Use PredRMSE.
+- Full-window RMSE can be inflated by mass-expiry events (all barriers resolve at 0/1 trivially).
+- Bybit vanilla options must use H = 0.50 (market convention).
+
+Full mathematical details and the complete results table are in [`docs/PRICING.md`](docs/PRICING.md#time-scaling-exponent-h).
 
 ---
 

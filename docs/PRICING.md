@@ -192,22 +192,92 @@ Standard:    σ·√τ  = σ·τ^0.5    and   σ²·τ = σ²·τ^1.0
 Generalized: σ·τ^H              and   σ²·τ^(2H)
 ```
 
-**Effects of H:**
+### Effects of H
 
-| H value | Behavior |
-|---------|----------|
-| H = 0.50 | Standard Black-Scholes (Brownian motion) |
-| H > 0.50 | Faster time decay → faster ATM convergence |
-| H < 0.50 | Slower time decay |
-| H ≈ 0.60–0.70 | Empirically best fit for crypto Polymarket events |
+For short-dated options (τ < 1 year, so τ is a small decimal, e.g. 0.019 for a 7-day event):
 
-**Default:** H = 0.65 (changed from 0.50 in V2).
+| H    | τ^H at τ = 7d | σ·τ^H (uncertainty term) | Behavior |
+|------|--------------|--------------------------|----------|
+| 0.40 | 0.239        | larger                   | Slow time decay — more uncertainty retained |
+| 0.50 | 0.138        | —                        | Standard Black-Scholes (Brownian motion) |
+| 0.65 | 0.071        | smaller                  | Faster convergence toward 0 or 1 |
+| 0.80 | 0.037        | much smaller             | Very rapid convergence near expiry |
 
-> H is only applied to **Polymarket** pricing. Bybit vanilla options use the standard H = 0.5 Black-Scholes formula, as they follow exchange-traded convention.
+**Larger H → smaller σ·τ^H → option price converges to 0 or 1 faster.** This is the correct direction for Polymarket crypto options which move faster than standard BM predicts.
 
-**Connection to Fractional Brownian Motion:** H is analogous to the Hurst exponent in fBM. H > 0.5 implies persistent/trending increments. The implementation is a pragmatic approximation — only the time scaling is modified, not the full fBM framework.
+### Connection to Theta
 
-**UI Control:** Purple slider, range 0.40–0.80, step 0.01, default 0.65. Changing H triggers recalibration of all Polymarket IVs and recomputes all projection curves.
+Theta (time value decay per unit τ) is proportional to ∂d₂/∂τ:
+
+```
+∂d₂/∂τ = −H · ln(S/K) / (σ · τ^(H+1))
+```
+
+Higher H:
+1. Multiplies the derivative by H (faster per-unit-time decay)
+2. The τ^(H+1) term in the denominator concentrates decay non-linearly — most time value is lost in the final days
+
+This means higher H → more convex theta curve → theta spikes sharply near expiry.
+
+> H does NOT interact with volatility the same way as σ. If σ is already large, σ·τ^H is large regardless of H. Raising H when vol is high would actually *compress* the uncertainty term back down — counterproductive. Do not conflate high-vol periods with a need for higher H.
+
+### Empirical Analysis (H Calibration Study)
+
+Analysis of 17 Polymarket BTC events (12 daily ABOVE events Feb 13–24, 2 monthly HIT events Jan–Feb 2026, 3 weekly 7-day HIT events Feb 2–22 2026) using out-of-sample prediction RMSE (calibrate IV on early half of data, predict late half). Source: `scripts/analyze_h.mjs`.
+
+#### Metrics used
+
+| Metric | How computed | Notes |
+|--------|-------------|-------|
+| **PredRMSE** | Calibrate IV on early τ, predict late τ prices | **Most reliable** |
+| Trend | dIV/dτ slope across time | Near-zero = H is correct |
+| StdDev | σ of calibrated IV over time | **Biased** — always selects H=0.40, discard |
+
+The StdDev metric is biased toward H=0.40 because lower H → larger τ^H → lower calibrated IV → smaller absolute variance. It is retained for reference only; use PredRMSE for H selection.
+
+#### HIT options (weekly 7-day events) — phase analysis
+
+Weekly events were split at τ = 3.5 days:
+
+| Phase | τ range | Events | Median H* (RMSE) | Notes |
+|-------|---------|--------|------------------|-------|
+| Full window | 0–7 d | 3 | 0.80 | Biased by expired events with large BTC moves |
+| **Early phase** | 3.5–7 d | 3 | **0.60** | Most relevant for new entries mid-week |
+| **Late phase** | 0–3.5 d | 3 | **0.65** | Near-expiry; matches app default |
+
+The full-window median of 0.80 is an artifact: during the Feb 2–8 event BTC dropped from $79k → $62k, making all UP barrier options expire at 0. Any model that decays faster (higher H) trivially predicts near-0 better in that scenario. Weighting the live event (Feb 16–22, BTC range $65.9k–$69.8k) where options didn't mass-expire: early H*=0.55, late H*=0.65.
+
+#### ABOVE options (daily ~24h events) — Feb 13–24
+
+| Period | Median H* (RMSE) |
+|--------|------------------|
+| Expired events | 0.55–0.60 |
+| Live events near expiry | 0.65 |
+
+#### Summary recommendation
+
+| Option type | Phase | Recommended H | App default |
+|-------------|-------|---------------|-------------|
+| HIT (one-touch) | tau > 3.5 d (early week) | 0.55–0.60 | 0.65 ⚠ |
+| HIT (one-touch) | tau ≤ 3.5 d (near expiry) | 0.65 | 0.65 ✓ |
+| ABOVE (binary) | any | 0.55–0.65 | 0.65 ✓ |
+| Bybit vanilla | — | 0.50 (fixed) | 0.50 ✓ |
+
+**App default H = 0.65 is well-supported for near-expiry positions and ABOVE type.** For early-week HIT entries (4–7 days to expiry), lowering H to 0.55–0.60 would improve model accuracy. No single H is optimal across all phases.
+
+**Default:** H is auto-computed per time snapshot based on τ:
+
+| τ at snapshot | Base H | Rationale |
+|---------------|--------|-----------|
+| > 7 days | 0.50 | Standard BS — early in event lifetime |
+| 3 – 7 days | 0.60 | Mid-week convergence accelerates |
+| ≤ 3 days | 0.65 | Near-expiry rapid convergence |
+
+> H is only applied to **Polymarket** pricing. Bybit vanilla options always use H = 0.50 (exchange-traded convention).
+
+**Connection to Fractional Brownian Motion:** H is analogous to the Hurst exponent in fBM. H > 0.5 implies persistent/trending increments. The implementation is a pragmatic approximation — only the time scaling is modified, not the full fBM framework. There is no empirical evidence that high-volatility BTC periods require a higher H; the two are independent parameters.
+
+**UI Control:** Purple ΔH offset slider, range −0.20 to +0.20, step 0.01, default 0.00. The slider shifts all three auto-computed tiers by the same delta. The current effective H values for each tier are shown live in the slider label. Changing ΔH triggers recalibration of all Polymarket IVs and recomputes all projection curves.
 
 ---
 

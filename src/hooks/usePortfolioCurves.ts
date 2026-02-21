@@ -6,6 +6,7 @@ import {
   bsPrice,
   priceOptionYes,
   interpolateSmile,
+  autoH,
   type SmilePoint,
 } from '../pricing/engine';
 
@@ -17,7 +18,7 @@ interface PortfolioCurvesInput {
   polyTauNow: number;        // Polymarket time to expiry in years
   polyExpiryTs: number;      // Polymarket expiry Unix seconds
   optionType: OptionType;
-  H: number;
+  deltaH: number;  // offset applied to auto-computed H tiers
   smile?: SmilePoint[];
   bybitSmile?: SmilePoint[]; // IV smile from Bybit option chain (sticky-moneyness)
   numPoints?: number; // default 500
@@ -164,7 +165,7 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     polyTauNow,
     polyExpiryTs,
     optionType,
-    H,
+    deltaH,
     smile,
     bybitSmile,
     numPoints = 2000,
@@ -193,11 +194,12 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     // Build shared uniform grid (500 points for smooth linear interpolation)
     const grid = buildPriceGrid(lowerPrice, upperPrice, numPoints);
 
-    // Compute combined curve at each snapshot
+    // Compute combined curve at each snapshot — each gets H auto-assigned by its τ
     const combinedCurves: ProjectionPoint[][] = snapshots.map(snap => {
       const polyTau = polyExpiryTs > 0
         ? Math.max((polyExpiryTs - snap.timestamp) / YEAR_SEC, 0)
         : 0;
+      const hForSnap = autoH(polyTau, deltaH);
       const bybitTaus = new Map<string, number>();
       for (const pos of bybitPositions) {
         bybitTaus.set(pos.symbol, Math.max(((pos.expiryTimestamp / 1000) - snap.timestamp) / YEAR_SEC, 0));
@@ -206,7 +208,7 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
         polyPositions, bybitPositions,
         lowerPrice, upperPrice,
         polyTau, bybitTaus,
-        optionType, H, smile, bybitSmile, numPoints, grid,
+        optionType, hForSnap, smile, bybitSmile, numPoints, grid,
       );
     });
 
@@ -216,11 +218,11 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     // Use shared grid so all curves align by index
     const polyNowCurve = computePolyOnlyCurve(
       polyPositions, grid,
-      polyTauNow, optionType, H, smile,
+      polyTauNow, optionType, autoH(polyTauNow, deltaH), smile,
     );
     const polyExpiryCurve = computePolyOnlyCurve(
       polyPositions, grid,
-      0, optionType, H, smile,
+      0, optionType, autoH(0, deltaH), smile,
     );
 
     // Bybit: now and at bybit's own expiry (tau=0)
@@ -253,5 +255,5 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       totalEntryCost,
       totalFees,
     };
-  }, [polyPositions, bybitPositions, lowerPrice, upperPrice, polyTauNow, polyExpiryTs, optionType, H, smile, bybitSmile, numPoints]);
+  }, [polyPositions, bybitPositions, lowerPrice, upperPrice, polyTauNow, polyExpiryTs, optionType, deltaH, smile, bybitSmile, numPoints]);
 }

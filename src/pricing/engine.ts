@@ -6,6 +6,21 @@ export interface SmilePoint {
 }
 
 /**
+ * Auto-compute H based on time-to-expiry in years.
+ * Both HIT and ABOVE use the same empirically-calibrated tier schedule:
+ *   tau > 7 days  → H = 0.50  (early, standard BS)
+ *   3 < tau ≤ 7 d → H = 0.60  (mid-week)
+ *   tau ≤ 3 days  → H = 0.65  (near expiry, faster convergence)
+ *
+ * deltaH offsets all tiers uniformly. Result clamped to [0.40, 0.80].
+ */
+export function autoH(tauYears: number, deltaH: number = 0): number {
+  const tauDays = tauYears * 365.25;
+  const base = tauDays > 7 ? 0.50 : tauDays > 3 ? 0.60 : 0.65;
+  return Math.max(0.40, Math.min(0.80, base + deltaH));
+}
+
+/**
  * Linear interpolation on the IV smile, flat extrapolation at edges.
  * Smile must be sorted by moneyness ascending.
  */
