@@ -332,6 +332,23 @@ export function OptimizationScreen({
     return points.sort((a, b) => a.moneyness - b.moneyness);
   }, [bybitChain, spotPrice]);
 
+  // For each column range, identify the single best-profitability match across all strikes
+  const bestMatchPerRange = useMemo(() => {
+    type Best = { match: OptMatchResult; pct: number } | null;
+    let b5: Best = null, b10: Best = null, b20: Best = null;
+    for (const r of optResults) {
+      const pct = (m: OptMatchResult | null, pnl: number) => {
+        if (!m) return -Infinity;
+        const cost = m.polyQty * m.noAskPrice + m.bybitAsk * bybitQty + m.bybitFee;
+        return cost > 0 ? (pnl / cost) * 100 : -Infinity;
+      };
+      if (r.best5)  { const p = pct(r.best5,  r.best5.avgPnl5);  if (!b5  || p > b5.pct)  b5  = { match: r.best5,  pct: p }; }
+      if (r.best10) { const p = pct(r.best10, r.best10.avgPnl10); if (!b10 || p > b10.pct) b10 = { match: r.best10, pct: p }; }
+      if (r.best20) { const p = pct(r.best20, r.best20.avgPnl20); if (!b20 || p > b20.pct) b20 = { match: r.best20, pct: p }; }
+    }
+    return { b5, b10, b20 };
+  }, [optResults, bybitQty]);
+
   const handleViz = useCallback((strikeResult: StrikeOptResult, match: OptMatchResult, range: '5' | '10' | '20') => {
     setVizSelection(prev =>
       (prev?.match === match && prev?.range === range) ? null : { strikeResult, match, range }
@@ -363,6 +380,10 @@ export function OptimizationScreen({
     const pct = totalCost > 0 ? (avgPnl / totalCost) * 100 : 0;
     const isSelected = vizSelection?.match === match && vizSelection?.range === range;
 
+    // Is this the single best-profitability cell in its column?
+    const bestForRange = range === '5' ? bestMatchPerRange.b5 : range === '10' ? bestMatchPerRange.b10 : bestMatchPerRange.b20;
+    const isTopCell = bestForRange?.match === match;
+
     return (
       <TableCell sx={{ verticalAlign: 'top' }}>
         <Box sx={{
@@ -379,26 +400,29 @@ export function OptimizationScreen({
           <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#4A90D9', mt: 0.5 }}>
             Poly: NO ×{polyQty.toFixed(2)} @ {noAskPrice.toFixed(4)} (${(noAskPrice * polyQty).toFixed(2)})
           </Typography>
-          <Box sx={{ mt: 0.75 }}>
-            <Typography variant="body2" sx={{ color: '#22C55E', fontSize: '0.72rem' }}>
-              Avg ±{range}%: +${avgPnl.toFixed(2)}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.75 }}>
+            <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600, fontSize: '0.78rem', flex: 1 }}>
+              Avg ±{range}%: +${avgPnl.toFixed(2)} (+{pct.toFixed(1)}%)
             </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.25 }}>
-              <Typography sx={{ color: '#22C55E', fontWeight: 700, fontSize: '0.9rem', fontFamily: 'monospace' }}>
+            {isTopCell && (
+              <Typography sx={{
+                color: '#22C55E', fontWeight: 800, fontSize: '1.15rem',
+                fontFamily: 'monospace', lineHeight: 1, whiteSpace: 'nowrap',
+              }}>
                 +{pct.toFixed(1)}%
               </Typography>
-              <IconButton
-                size="small"
-                onClick={() => handleViz(strikeResult, match, range)}
-                sx={{
-                  ml: 'auto', p: 0.5,
-                  color: isSelected ? '#00D1FF' : 'text.secondary',
-                  '&:hover': { color: '#00D1FF' },
-                }}
-              >
-                <BarChart fontSize="small" />
-              </IconButton>
-            </Box>
+            )}
+            <IconButton
+              size="small"
+              onClick={() => handleViz(strikeResult, match, range)}
+              sx={{
+                p: 0.5,
+                color: isSelected ? '#00D1FF' : 'text.secondary',
+                '&:hover': { color: '#00D1FF' },
+              }}
+            >
+              <BarChart fontSize="small" />
+            </IconButton>
           </Box>
         </Box>
       </TableCell>
