@@ -1,5 +1,5 @@
 {
-  "name": "grapher-v5",
+  "name": "position-auto-hedger",
   "private": true,
   "version": "5.2.0",
   "description": "Polymarket + Bybit options optimizer with 3-leg spread — poly NO + long option + short option at poly strike",

@@ -1,6 +1,6 @@
 # Grapher V5 — Polymarket + Bybit 3-Leg Spread Optimizer
 
-**Live:** [shtanga0x.github.io/grapher_v5](https://shtanga0x.github.io/grapher_v5/)
+**Live:** [shtanga0x.github.io/position_auto_hedger](https://shtanga0x.github.io/position_auto_hedger/)
 
 A browser-based optimization tool that finds the best **3-leg spread** to hedge each Polymarket crypto event strike:
 
