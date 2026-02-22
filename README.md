@@ -70,21 +70,27 @@ Feasible combinations are ranked by mean 3-leg P&L in three ranges:
 
 | Column | Range | Score |
 |--------|-------|-------|
+| Best ±1% | `[0.99×spot, 1.01×spot]` | Mean P&L |
 | Best ±5% | `[0.95×spot, 1.05×spot]` | Mean P&L |
-| Best ±10% | `[0.90×spot, 1.10×spot]` | Mean P&L |
 | Best ±20% | `[0.80×spot, 1.20×spot]` | Mean P&L |
 
 ### 3. Optimization Table
 
-The second screen shows a 4-column table. Each cell (for ±5/10/20%) shows:
+The second screen shows a 4-column table (Strike, Best ±1%, Best ±5%, Best ±20%). Each cell shows:
 - **Long leg**: Bybit symbol — buy ×0.01 @ ask ($cost, fee)
 - **Short leg**: Bybit symbol — sell ×0.01 @ bid ($received, fee)
 - **Poly leg**: NO ×qty @ noAsk ($cost)
 - **Avg ±N%**: mean combined P&L in the range
 
-`—` is shown if no feasible 3-leg hedge exists for that range.
+`—` is shown if no feasible 3-leg hedge exists for that range. All rows are shown even if IV calibration or short-leg selection failed — those appear as `—` across all columns.
 
-### 4. P&L Visualization
+Header chips show Polymarket and Bybit expiry times in **UTC+1** (e.g. `Poly exp: 28.02.2026 08:00`).
+
+### 4. Snapshot Export
+
+A **camera button** (green, top-right) appears when a visualization is active. Clicking it saves `PolyOption_YYYY-MM-DD.jpg` — a 2× resolution screenshot of the selected 3-leg position card (long leg, short leg, Poly leg details + P&L chart) via `html2canvas`.
+
+### 5. P&L Visualization
 
 Click the **chart icon** in any cell to render the combined 3-leg P&L chart:
 - **Combined curves**: time snapshots (Now, ½ to earlier expiry, at earlier expiry, at later expiry)
@@ -92,7 +98,7 @@ Click the **chart icon** in any cell to render the combined 3-leg P&L chart:
 - **Green/red split**: positive P&L in green, negative in red
 - **Dual Y-axes**: left = P&L ($), right = P&L (%)
 
-### 5. Pricing Engine
+### 6. Pricing Engine
 
 - **Polymarket `hit` type**: one-touch barrier formula with auto-H time scaling
 - **Bybit options**: standard Black-Scholes (`bsCallPrice` / `bsPutPrice`)
@@ -106,6 +112,10 @@ Click the **chart icon** in any cell to render the combined 3-leg P&L chart:
 | Legs | Poly NO + Long Bybit | Poly NO + Long Bybit + Short Bybit at K_poly |
 | Hedge P&L at strike | Long option profit | Net spread profit (long − short) |
 | P&L profile | Unlimited upside | Defined spread; higher avg P&L near spot |
+| Scoring ranges | ±5% / ±10% / ±20% | ±1% / ±5% / ±20% |
+| Missing rows | Hidden | Shown as `—` |
+| Expiry display | Date only | Date + time in UTC+1 |
+| Snapshot export | ✗ | ✓ (JPG via html2canvas) |
 
 ## Architecture
 
@@ -138,6 +148,7 @@ src/
 - **Material UI (MUI)** — components and theming
 - **Recharts** — chart rendering
 - **Axios** — HTTP client
+- **html2canvas** — DOM-to-JPG screenshot (lazy-imported)
 - **Cloudflare Workers** — API proxy (CORS bypass for Polymarket)
 
 ## Development
