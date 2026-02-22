@@ -382,7 +382,7 @@ export function OptimizationScreen({
     for (const r of optResults) {
       const pct = (m: OptMatchResult | null, pnl: number) => {
         if (!m) return -Infinity;
-        const cost = m.polyQty * m.noAskPrice + m.bybitAsk * bybitQty + m.bybitFee - m.shortBid * bybitQty + m.shortFee;
+        const cost = m.polyQty * m.noAskPrice + m.bybitAsk * bybitQty + m.bybitFee + m.shortBid * bybitQty + m.shortFee;
         return cost > 0 ? (pnl / cost) * 100 : -Infinity;
       };
       if (r.best1)  { const p = pct(r.best1,  r.best1.avgPnl1);   if (!b1  || p > b1.pct)  b1  = { match: r.best1,  pct: p }; }
@@ -419,7 +419,7 @@ export function OptimizationScreen({
 
     const { instrument, shortInstrument, polyQty, noAskPrice, bybitAsk, bybitFee, shortBid, shortFee, avgPnl1, avgPnl10, avgPnl20 } = match;
     const avgPnl = range === '1' ? avgPnl1 : range === '10' ? avgPnl10 : avgPnl20;
-    const totalCost = polyQty * noAskPrice + bybitAsk * bybitQty + bybitFee - shortBid * bybitQty + shortFee;
+    const totalCost = polyQty * noAskPrice + bybitAsk * bybitQty + bybitFee + shortBid * bybitQty + shortFee;
     const pct = totalCost > 0 ? (avgPnl / totalCost) * 100 : 0;
     const isSelected = vizSelection?.match === match && vizSelection?.range === range;
 
@@ -441,7 +441,7 @@ export function OptimizationScreen({
           <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#EF4444', fontWeight: 600, mb: 0.5 }}>
             ↓ {shortInstrument.symbol} ×{bybitQty} @ ${shortBid.toFixed(0)}
           </Typography>
-          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#4A90D9' }}>
+          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#4A90D9' }}>
             Poly: NO ×{polyQty.toFixed(2)} @ {noAskPrice.toFixed(4)} (${(noAskPrice * polyQty).toFixed(2)})
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.75 }}>

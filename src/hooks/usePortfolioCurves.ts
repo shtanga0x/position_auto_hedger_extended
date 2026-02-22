@@ -240,8 +240,7 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     let totalFees = 0;
     for (const p of polyPositions) totalEntryCost += p.entryPrice * p.quantity;
     for (const b of bybitPositions) {
-      const mult = b.side === 'buy' ? 1 : -1;
-      totalEntryCost += b.entryPrice * mult * b.quantity;
+      totalEntryCost += b.entryPrice * b.quantity; // always positive: premium is margin cost for sell too
       totalFees += b.entryFee;
     }
 
