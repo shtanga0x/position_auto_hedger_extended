@@ -1,14 +1,20 @@
-# Grapher V4 — Polymarket + Bybit Options Optimizer
+# Grapher V5 — Polymarket + Bybit 3-Leg Spread Optimizer
 
-**Live:** [shtanga0x.github.io/grapher_v4](https://shtanga0x.github.io/grapher_v4/)
+**Live:** [shtanga0x.github.io/grapher_v5](https://shtanga0x.github.io/grapher_v5/)
 
-A browser-based optimization tool that automatically finds the best Bybit vanilla option to hedge each Polymarket crypto event strike. It constructs a combined position where the Bybit option profit at the Polymarket strike offsets the Polymarket loss, then ranks all feasible hedges by average P&L in ±5%, ±10%, ±20% ranges.
+A browser-based optimization tool that finds the best **3-leg spread** to hedge each Polymarket crypto event strike:
+
+1. **Poly NO** — buy the NO side of the Polymarket binary market
+2. **Long Bybit option** — buy a CALL (up-barrier) or PUT (down-barrier) at any strike
+3. **Short Bybit option** — sell a CALL/PUT at (or nearest to) the Polymarket strike, converting the unlimited option into a spread
+
+The optimizer sizes the Poly NO position so the net position breaks even at the strike, then ranks all feasible 3-leg combinations by average P&L in ±5%, ±10%, ±20% ranges around the current spot price.
 
 ## How It Works
 
 ### 1. Setup
 
-Load a **Polymarket event URL** (crypto above/hit type) and select a **Bybit expiry** from the option chain. Both are required for the optimizer.
+Load a **Polymarket event URL** (crypto above/hit type) and select a **Bybit expiry** from the option chain. Both are required.
 
 The app auto-detects:
 - **Cryptocurrency** (BTC, ETH, SOL, XRP)
@@ -18,97 +24,112 @@ The app auto-detects:
 
 ### 2. Optimization
 
-For each Polymarket strike, the optimizer searches all matching Bybit options and finds the best hedge:
+For each Polymarket strike the optimizer iterates all Bybit options of matching type and finds the best 3-leg spread.
 
 #### Direction
-- Strike > Spot → UP barrier → hedge with **CALL** options
-- Strike < Spot → DOWN barrier → hedge with **PUT** options
+- Strike > Spot → UP barrier → use **CALL** options
+- Strike < Spot → DOWN barrier → use **PUT** options
+
+#### Short Leg (Fixed)
+The short leg is pinned to the Polymarket strike or the nearest valid Bybit strike:
+- CALL (up-barrier): sell CALL at the **lowest available strike ≥ K_poly**
+- PUT (down-barrier): sell PUT at the **highest available strike ≤ K_poly**
+
+This converts unlimited option upside into a defined spread centred on `K_poly`.
 
 #### Bybit Quantity
-Fixed at **0.01 contracts** per hedge.
+Fixed at **0.01 contracts** for both long and short legs.
 
 #### Poly Quantity (Derived from Hedge Constraint)
-The Polymarket position (NO side) is sized so that at the strike price:
+The Poly NO position is sized so that at the Polymarket strike the combined net P&L of all three legs equals zero:
 
 ```
-Poly loss (at strike) + Bybit profit (at strike) = 0
+Poly loss (at strike) + Net option profit (at strike) = 0
 
-polyQty = bybitProfit_at_strike / noAskPrice
+polyQty = netOptionProfit_at_strike / noAskPrice
 
 where:
-  bybitProfit_at_strike = (bsPrice(K_poly, K_bybit, markIv, τ_bybit_rem) - bybitAsk) × 0.01 − fee
-  noAskPrice = 1 − YES_bid  (cost to buy NO at market)
+  longProfitAtStrike  = (bsPrice(K_poly, K_long,  markIv_long,  τ_bybit_rem) − longAsk)  × 0.01 − longFee
+  shortPnlAtStrike    = (shortBid − bsPrice(K_poly, K_short, markIv_short, τ_bybit_rem)) × 0.01 − shortFee
+  netOptionProfit     = longProfitAtStrike + shortPnlAtStrike
+  noAskPrice          = 1 − YES_bid   (cost to buy one NO token)
 ```
 
-When the Polymarket barrier is hit (spot reaches `K_poly`), the NO position goes to zero — the loss is exactly offset by the Bybit option profit.
+Only combinations where `netOptionProfit_at_strike > 0` are considered.
 
 #### Evaluation Time
-Both positions are evaluated at the **earlier of the two expiries**:
+All three legs are evaluated at the **earlier of the two expiries**:
 - `τ_eval = min(τ_poly, τ_bybit)`
-- At evaluation: `τ_poly_rem = τ_poly − τ_eval`, `τ_bybit_rem = τ_bybit − τ_eval`
-- One of these will be zero (the position at its expiry)
+- `τ_poly_rem = τ_poly − τ_eval`, `τ_bybit_rem = τ_bybit − τ_eval`
 
 #### Feasibility Check
-A combination is feasible only if the combined P&L is **non-negative at every price point** in the ±20% range around the Polymarket strike. 200 evenly-spaced grid points are checked.
+A combination is feasible only if the **combined 3-leg P&L is ≥ 0 at every point** in the ±20% range around spot. 200 evenly-spaced grid points are checked.
 
 #### Scoring
-Feasible options are ranked by average combined P&L in three ranges:
+Feasible combinations are ranked by mean 3-leg P&L in three ranges:
+
 | Column | Range | Score |
 |--------|-------|-------|
-| Best ±5% | `[0.95K, 1.05K]` | Mean P&L in range |
-| Best ±10% | `[0.90K, 1.10K]` | Mean P&L in range |
-| Best ±20% | `[0.80K, 1.20K]` | Mean P&L in range |
+| Best ±5% | `[0.95×spot, 1.05×spot]` | Mean P&L |
+| Best ±10% | `[0.90×spot, 1.10×spot]` | Mean P&L |
+| Best ±20% | `[0.80×spot, 1.20×spot]` | Mean P&L |
 
 ### 3. Optimization Table
 
-The second screen shows a 4-column table:
+The second screen shows a 4-column table. Each cell (for ±5/10/20%) shows:
+- **Long leg**: Bybit symbol — buy ×0.01 @ ask ($cost, fee)
+- **Short leg**: Bybit symbol — sell ×0.01 @ bid ($received, fee)
+- **Poly leg**: NO ×qty @ noAsk ($cost)
+- **Avg ±N%**: mean combined P&L in the range
 
-| Poly Strike | Best ±5% | Best ±10% | Best ±20% |
-|-------------|----------|-----------|-----------|
-| ↑ $100,000 — NO ask: 0.9840 | BTC-27FEB26-95000-C — buy ×0.01 @ $205 ($2.05, fee: $0.14) / Poly: NO ×2.35 @ 0.984 ($2.31) / Avg ±5%: +$0.42 | ... | ... |
-
-The `—` symbol is shown if no feasible hedge exists for that range.
+`—` is shown if no feasible 3-leg hedge exists for that range.
 
 ### 4. P&L Visualization
 
-Click the **chart icon** in any cell to render the combined P&L chart for that pair:
-- **Combined curves**: 4 time snapshots (Now, ½ to earlier expiry, at earlier expiry, at later expiry)
-- **Overlay curves**: Polymarket-only (blue) and Bybit-only (orange)
+Click the **chart icon** in any cell to render the combined 3-leg P&L chart:
+- **Combined curves**: time snapshots (Now, ½ to earlier expiry, at earlier expiry, at later expiry)
+- **Overlay curves**: Poly-only (blue) and Bybit spread-only (orange)
 - **Green/red split**: positive P&L in green, negative in red
 - **Dual Y-axes**: left = P&L ($), right = P&L (%)
 
 ### 5. Pricing Engine
-
-Uses the same engine as Grapher V2 and V3:
 
 - **Polymarket `hit` type**: one-touch barrier formula with auto-H time scaling
 - **Bybit options**: standard Black-Scholes (`bsCallPrice` / `bsPutPrice`)
 - **Auto-H tiers**: τ > 7d → H=0.50, 3–7d → H=0.60, ≤3d → H=0.65
 - **IV smile**: sticky-moneyness interpolation for chart curves
 
+## What's New vs V4
+
+| | V4 (2-leg) | V5 (3-leg) |
+|---|---|---|
+| Legs | Poly NO + Long Bybit | Poly NO + Long Bybit + Short Bybit at K_poly |
+| Hedge P&L at strike | Long option profit | Net spread profit (long − short) |
+| P&L profile | Unlimited upside | Defined spread; higher avg P&L near spot |
+
 ## Architecture
 
 ```
 src/
 ├── api/
-│   ├── binance.ts           # Spot price from Binance
-│   ├── bybit.ts             # Bybit option chain + tickers
-│   ├── config.ts            # API base URLs (worker proxy)
-│   └── polymarket.ts        # Event fetch, strike/crypto/type detection
+│   ├── binance.ts            # Spot price from Binance
+│   ├── bybit.ts              # Bybit option chain + tickers
+│   ├── config.ts             # API base URLs (worker proxy)
+│   └── polymarket.ts         # Event fetch, strike/crypto/type detection
 ├── components/
-│   ├── SetupScreen.tsx       # URL input + Bybit expiry selector
-│   ├── OptimizationScreen.tsx # Table + chart visualization
-│   ├── PolymarketPanel.tsx   # Polymarket URL input panel
-│   ├── BybitOptionChain.tsx  # Bybit expiry selector
-│   └── ProjectionChart.tsx  # Recharts chart (shared with v3)
+│   ├── SetupScreen.tsx        # URL input + Bybit expiry selector
+│   ├── OptimizationScreen.tsx # Table + chart visualization (3-leg)
+│   ├── PolymarketPanel.tsx    # Polymarket URL input panel
+│   ├── BybitOptionChain.tsx   # Bybit expiry selector
+│   └── ProjectionChart.tsx   # Recharts chart
 ├── hooks/
-│   └── usePortfolioCurves.ts # Combined P&L curves (shared with v3)
+│   └── usePortfolioCurves.ts  # Combined 3-leg P&L curves
 ├── optimization/
-│   └── optimizer.ts          # Core optimization engine
+│   └── optimizer.ts           # Core 3-leg optimizer
 ├── pricing/
-│   └── engine.ts             # Pricing math (shared with v2/v3)
+│   └── engine.ts              # Pricing math (shared with v2/v3/v4)
 └── types/
-    └── index.ts              # TypeScript interfaces (+ OptMatchResult, StrikeOptResult)
+    └── index.ts               # TypeScript interfaces
 ```
 
 ## Tech Stack
