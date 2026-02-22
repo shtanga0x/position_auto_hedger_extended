@@ -45,7 +45,7 @@ interface OptimizationScreenProps {
 interface VizSelection {
   strikeResult: StrikeOptResult;
   match: OptMatchResult;
-  range: '1' | '5' | '20';
+  range: '1' | '10' | '20';
 }
 
 /** Chart visualization for a selected poly + bybit 3-leg match */
@@ -201,7 +201,7 @@ function VizCard({
             Spread net: {netSpread >= 0 ? '+' : ''}${netSpread.toFixed(2)} | Eval in {evalDays}d
           </Typography>
           <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600 }}>
-            Avg P&amp;L ±1%: +${match.avgPnl1.toFixed(2)} &nbsp;|&nbsp; ±5%: +${match.avgPnl5.toFixed(2)} &nbsp;|&nbsp; ±20%: +${match.avgPnl20.toFixed(2)}
+            Avg P&amp;L ±1%: +${match.avgPnl1.toFixed(2)} &nbsp;|&nbsp; ±10%: +${match.avgPnl10.toFixed(2)} &nbsp;|&nbsp; ±20%: +${match.avgPnl20.toFixed(2)}
           </Typography>
         </Box>
       </Paper>
@@ -378,21 +378,21 @@ export function OptimizationScreen({
   // For each column range, identify the single best-profitability match across all strikes
   const bestMatchPerRange = useMemo(() => {
     type Best = { match: OptMatchResult; pct: number } | null;
-    let b1: Best = null, b5: Best = null, b20: Best = null;
+    let b1: Best = null, b10: Best = null, b20: Best = null;
     for (const r of optResults) {
       const pct = (m: OptMatchResult | null, pnl: number) => {
         if (!m) return -Infinity;
         const cost = m.polyQty * m.noAskPrice + m.bybitAsk * bybitQty + m.bybitFee - m.shortBid * bybitQty + m.shortFee;
         return cost > 0 ? (pnl / cost) * 100 : -Infinity;
       };
-      if (r.best1)  { const p = pct(r.best1,  r.best1.avgPnl1);  if (!b1  || p > b1.pct)  b1  = { match: r.best1,  pct: p }; }
-      if (r.best5)  { const p = pct(r.best5,  r.best5.avgPnl5);  if (!b5  || p > b5.pct)  b5  = { match: r.best5,  pct: p }; }
-      if (r.best20) { const p = pct(r.best20, r.best20.avgPnl20); if (!b20 || p > b20.pct) b20 = { match: r.best20, pct: p }; }
+      if (r.best1)  { const p = pct(r.best1,  r.best1.avgPnl1);   if (!b1  || p > b1.pct)  b1  = { match: r.best1,  pct: p }; }
+      if (r.best10) { const p = pct(r.best10, r.best10.avgPnl10);  if (!b10 || p > b10.pct) b10 = { match: r.best10, pct: p }; }
+      if (r.best20) { const p = pct(r.best20, r.best20.avgPnl20);  if (!b20 || p > b20.pct) b20 = { match: r.best20, pct: p }; }
     }
-    return { b1, b5, b20 };
+    return { b1, b10, b20 };
   }, [optResults, bybitQty]);
 
-  const handleViz = useCallback((strikeResult: StrikeOptResult, match: OptMatchResult, range: '1' | '5' | '20') => {
+  const handleViz = useCallback((strikeResult: StrikeOptResult, match: OptMatchResult, range: '1' | '10' | '20') => {
     setVizSelection(prev =>
       (prev?.match === match && prev?.range === range) ? null : { strikeResult, match, range }
     );
@@ -408,7 +408,7 @@ export function OptimizationScreen({
     return d > 0 ? `${d}d ${h}h` : `${h}h`;
   }
 
-  const renderBybitCell = (strikeResult: StrikeOptResult, match: OptMatchResult | null, range: '1' | '5' | '20') => {
+  const renderBybitCell = (strikeResult: StrikeOptResult, match: OptMatchResult | null, range: '1' | '10' | '20') => {
     if (!match) {
       return (
         <TableCell sx={{ verticalAlign: 'top', color: 'text.secondary', fontSize: '1.2rem' }}>
@@ -417,13 +417,13 @@ export function OptimizationScreen({
       );
     }
 
-    const { instrument, shortInstrument, polyQty, noAskPrice, bybitAsk, bybitFee, shortBid, shortFee, avgPnl1, avgPnl5, avgPnl20 } = match;
-    const avgPnl = range === '1' ? avgPnl1 : range === '5' ? avgPnl5 : avgPnl20;
+    const { instrument, shortInstrument, polyQty, noAskPrice, bybitAsk, bybitFee, shortBid, shortFee, avgPnl1, avgPnl10, avgPnl20 } = match;
+    const avgPnl = range === '1' ? avgPnl1 : range === '10' ? avgPnl10 : avgPnl20;
     const totalCost = polyQty * noAskPrice + bybitAsk * bybitQty + bybitFee - shortBid * bybitQty + shortFee;
     const pct = totalCost > 0 ? (avgPnl / totalCost) * 100 : 0;
     const isSelected = vizSelection?.match === match && vizSelection?.range === range;
 
-    const bestForRange = range === '1' ? bestMatchPerRange.b1 : range === '5' ? bestMatchPerRange.b5 : bestMatchPerRange.b20;
+    const bestForRange = range === '1' ? bestMatchPerRange.b1 : range === '10' ? bestMatchPerRange.b10 : bestMatchPerRange.b20;
     const isTopCell = bestForRange?.match === match;
 
     return (
@@ -555,7 +555,7 @@ export function OptimizationScreen({
               <TableRow sx={{ bgcolor: isDark ? 'rgba(19, 26, 42, 0.5)' : 'rgba(0,0,0,0.03)' }}>
                 <TableCell sx={{ fontWeight: 700, width: '25%', color: '#4A90D9' }}>Poly Strike</TableCell>
                 <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±1%</TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±5%</TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±10%</TableCell>
                 <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±20%</TableCell>
               </TableRow>
             </TableHead>
@@ -581,7 +581,7 @@ export function OptimizationScreen({
                       </Typography>
                     </TableCell>
                     {renderBybitCell(result, result.best1, '1')}
-                    {renderBybitCell(result, result.best5, '5')}
+                    {renderBybitCell(result, result.best10, '10')}
                     {renderBybitCell(result, result.best20, '20')}
                   </TableRow>
                 );
