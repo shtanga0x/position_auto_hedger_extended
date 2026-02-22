@@ -23,7 +23,7 @@ function setCache<T>(key: string, data: T): void {
   cache.set(key, { data, timestamp: Date.now() });
 }
 
-/** Parse Bybit symbol like "BTC-28FEB25-100000-C" or "BTC-27MAR26-86000-P-USDT" */
+/** Parse Bybit symbol like "BTC-28FEB25-100000-C" (USDC-settled, standard) */
 export function parseBybitSymbol(symbol: string): {
   base: string;
   expiryStr: string;
@@ -31,8 +31,7 @@ export function parseBybitSymbol(symbol: string): {
   optionsType: 'Call' | 'Put';
 } | null {
   const parts = symbol.split('-');
-  // Strip trailing USDT suffix (5-part format)
-  if (parts.length === 5 && parts[4] === 'USDT') parts.pop();
+  // Reject USDT-settled options (5-part format) — non-standard strike ladder
   if (parts.length !== 4) return null;
   const strike = parseFloat(parts[2]);
   if (isNaN(strike)) return null;

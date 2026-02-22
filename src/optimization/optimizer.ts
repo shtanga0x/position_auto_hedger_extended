@@ -39,13 +39,15 @@ export function runOptimization(
     const isUpBarrier = market.strikePrice > spotPrice;
     const matchingType = isUpBarrier ? 'Call' : 'Put';
 
-    // NO ask price: what we pay to buy the NO side at market
-    const noAskPrice = market.bestBid != null
-      ? (1 - market.bestBid)
-      : (1 - market.currentPrice);
+    // NO ask price: what we pay to buy the NO side at market.
+    // Use bestBid (YES bid) when available and positive; fall back to currentPrice (mid).
+    const yesBid = (market.bestBid != null && market.bestBid > 0)
+      ? market.bestBid
+      : market.currentPrice;
+    const noAskPrice = 1 - yesBid;
 
-    // Skip near-resolved markets (NO < 1 cent): polyQty = profit/noAsk would be astronomically large
-    if (noAskPrice < 0.01 || noAskPrice >= 1) continue;
+    // Skip fully-resolved markets (YES ≥ 1 or NO ≤ 1 cent)
+    if (noAskPrice < 0.01 || noAskPrice > 0.9999) continue;
 
     // Calibrate poly implied vol at current tau with auto-H
     const hNow = autoH(tauPoly, 0);
@@ -53,7 +55,11 @@ export function runOptimization(
       spotPrice, market.strikePrice, tauPoly,
       market.currentPrice, optionType, isUpBarrier, hNow,
     );
-    if (polyIv === null || polyIv <= 0) continue;
+    // If IV calibration fails, still include the strike in results (shows as —)
+    if (polyIv === null || polyIv <= 0) {
+      results.push({ market, isUpBarrier, polyIv: 0, best5: null, best10: null, best20: null });
+      continue;
+    }
 
     // --- Find the short option leg (fixed to K_poly or nearest valid strike) ---
     // CALL (up-barrier): sell CALL at lowest available strike >= K_poly
