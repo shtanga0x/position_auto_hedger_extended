@@ -1,7 +1,7 @@
 {
   "name": "grapher-v5",
   "private": true,
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "Polymarket + Bybit options optimizer with 3-leg spread — poly NO + long option + short option at poly strike",
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "@mui/icons-material": "^7.3.5",
     "@mui/material": "^7.3.5",
     "axios": "^1.13.2",
+    "html2canvas": "^1.4.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "recharts": "^3.5.1",

@@ -57,7 +57,7 @@ export function runOptimization(
     );
     // If IV calibration fails, still include the strike in results (shows as —)
     if (polyIv === null || polyIv <= 0) {
-      results.push({ market, isUpBarrier, polyIv: 0, best5: null, best10: null, best20: null });
+      results.push({ market, isUpBarrier, polyIv: 0, best1: null, best5: null, best20: null });
       continue;
     }
 
@@ -81,21 +81,21 @@ export function runOptimization(
     }
 
     if (!shortInst) {
-      results.push({ market, isUpBarrier, polyIv, best5: null, best10: null, best20: null });
+      results.push({ market, isUpBarrier, polyIv, best1: null, best5: null, best20: null });
       continue;
     }
 
     const shortTicker = bybitChain.tickers.get(shortInst.symbol);
     const shortBid = shortTicker?.bid1Price ?? 0;
     if (!shortTicker || shortBid <= 0 || shortTicker.markIv <= 0) {
-      results.push({ market, isUpBarrier, polyIv, best5: null, best10: null, best20: null });
+      results.push({ market, isUpBarrier, polyIv, best1: null, best5: null, best20: null });
       continue;
     }
 
     const shortFee = bybitTradingFee(spotPrice, shortBid, bybitQty);
 
+    let best1: OptMatchResult | null = null;
     let best5: OptMatchResult | null = null;
-    let best10: OptMatchResult | null = null;
     let best20: OptMatchResult | null = null;
 
     // Filter long-leg candidates (same option type, different from short leg)
@@ -204,8 +204,8 @@ export function runOptimization(
         return count > 0 ? sum / count : 0;
       };
 
+      const avgPnl1  = avgInRange(0.99 * spotPrice, 1.01 * spotPrice);
       const avgPnl5  = avgInRange(0.95 * spotPrice, 1.05 * spotPrice);
-      const avgPnl10 = avgInRange(0.90 * spotPrice, 1.10 * spotPrice);
       const avgPnl20 = avgInRange(0.80 * spotPrice, 1.20 * spotPrice);
 
       const match: OptMatchResult = {
@@ -219,20 +219,20 @@ export function runOptimization(
         bybitFee,
         shortBid,
         shortFee,
+        avgPnl1,
         avgPnl5,
-        avgPnl10,
         avgPnl20,
         tauPolyRem,
         tauBybitRem,
         tauEval,
       };
 
+      if (best1  === null || avgPnl1  > best1.avgPnl1)   best1  = match;
       if (best5  === null || avgPnl5  > best5.avgPnl5)   best5  = match;
-      if (best10 === null || avgPnl10 > best10.avgPnl10)  best10 = match;
       if (best20 === null || avgPnl20 > best20.avgPnl20)  best20 = match;
     }
 
-    results.push({ market, isUpBarrier, polyIv, best5, best10, best20 });
+    results.push({ market, isUpBarrier, polyIv, best1, best5, best20 });
   }
 
   return results;

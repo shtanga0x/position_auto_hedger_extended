@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -15,7 +15,7 @@ import {
   Slider,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { ArrowBack, BarChart } from '@mui/icons-material';
+import { ArrowBack, BarChart, PhotoCamera } from '@mui/icons-material';
 import type {
   CryptoOption,
   OptionType,
@@ -45,7 +45,7 @@ interface OptimizationScreenProps {
 interface VizSelection {
   strikeResult: StrikeOptResult;
   match: OptMatchResult;
-  range: '5' | '10' | '20';
+  range: '1' | '5' | '20';
 }
 
 /** Chart visualization for a selected poly + bybit 3-leg match */
@@ -201,7 +201,7 @@ function VizCard({
             Spread net: {netSpread >= 0 ? '+' : ''}${netSpread.toFixed(2)} | Eval in {evalDays}d
           </Typography>
           <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600 }}>
-            Avg P&amp;L ±5%: +${match.avgPnl5.toFixed(2)} &nbsp;|&nbsp; ±10%: +${match.avgPnl10.toFixed(2)} &nbsp;|&nbsp; ±20%: +${match.avgPnl20.toFixed(2)}
+            Avg P&amp;L ±1%: +${match.avgPnl1.toFixed(2)} &nbsp;|&nbsp; ±5%: +${match.avgPnl5.toFixed(2)} &nbsp;|&nbsp; ±20%: +${match.avgPnl20.toFixed(2)}
           </Typography>
         </Box>
       </Paper>
@@ -304,6 +304,29 @@ export function OptimizationScreen({
 
   const [vizSelection, setVizSelection] = useState<VizSelection | null>(null);
   const [bybitQtyInput, setBybitQtyInput] = useState('0.01');
+  const snapshotRef = useRef<HTMLDivElement>(null);
+
+  /** Format a Unix-ms timestamp as HH:MM UTC+1 */
+  const fmtTimeUTC1 = (ms: number) => {
+    const d = new Date(ms + 3_600_000);
+    return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} UTC+1`;
+  };
+
+  const handleSnapshot = useCallback(async () => {
+    if (!snapshotRef.current) return;
+    const html2canvas = (await import('html2canvas')).default;
+    const canvas = await html2canvas(snapshotRef.current, {
+      backgroundColor: isDark ? '#0A0E17' : '#ffffff',
+      scale: 2,
+      useCORS: true,
+      logging: false,
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    const link = document.createElement('a');
+    link.download = `PolyOption_${today}.jpg`;
+    link.href = canvas.toDataURL('image/jpeg', 0.95);
+    link.click();
+  }, [isDark]);
 
   const bybitQty = useMemo(() => {
     const v = parseFloat(bybitQtyInput);
@@ -355,21 +378,21 @@ export function OptimizationScreen({
   // For each column range, identify the single best-profitability match across all strikes
   const bestMatchPerRange = useMemo(() => {
     type Best = { match: OptMatchResult; pct: number } | null;
-    let b5: Best = null, b10: Best = null, b20: Best = null;
+    let b1: Best = null, b5: Best = null, b20: Best = null;
     for (const r of optResults) {
       const pct = (m: OptMatchResult | null, pnl: number) => {
         if (!m) return -Infinity;
         const cost = m.polyQty * m.noAskPrice + m.bybitAsk * bybitQty + m.bybitFee - m.shortBid * bybitQty + m.shortFee;
         return cost > 0 ? (pnl / cost) * 100 : -Infinity;
       };
+      if (r.best1)  { const p = pct(r.best1,  r.best1.avgPnl1);  if (!b1  || p > b1.pct)  b1  = { match: r.best1,  pct: p }; }
       if (r.best5)  { const p = pct(r.best5,  r.best5.avgPnl5);  if (!b5  || p > b5.pct)  b5  = { match: r.best5,  pct: p }; }
-      if (r.best10) { const p = pct(r.best10, r.best10.avgPnl10); if (!b10 || p > b10.pct) b10 = { match: r.best10, pct: p }; }
       if (r.best20) { const p = pct(r.best20, r.best20.avgPnl20); if (!b20 || p > b20.pct) b20 = { match: r.best20, pct: p }; }
     }
-    return { b5, b10, b20 };
+    return { b1, b5, b20 };
   }, [optResults, bybitQty]);
 
-  const handleViz = useCallback((strikeResult: StrikeOptResult, match: OptMatchResult, range: '5' | '10' | '20') => {
+  const handleViz = useCallback((strikeResult: StrikeOptResult, match: OptMatchResult, range: '1' | '5' | '20') => {
     setVizSelection(prev =>
       (prev?.match === match && prev?.range === range) ? null : { strikeResult, match, range }
     );
@@ -385,7 +408,7 @@ export function OptimizationScreen({
     return d > 0 ? `${d}d ${h}h` : `${h}h`;
   }
 
-  const renderBybitCell = (strikeResult: StrikeOptResult, match: OptMatchResult | null, range: '5' | '10' | '20') => {
+  const renderBybitCell = (strikeResult: StrikeOptResult, match: OptMatchResult | null, range: '1' | '5' | '20') => {
     if (!match) {
       return (
         <TableCell sx={{ verticalAlign: 'top', color: 'text.secondary', fontSize: '1.2rem' }}>
@@ -394,13 +417,13 @@ export function OptimizationScreen({
       );
     }
 
-    const { instrument, shortInstrument, polyQty, noAskPrice, bybitAsk, bybitFee, shortBid, shortFee, avgPnl5, avgPnl10, avgPnl20 } = match;
-    const avgPnl = range === '5' ? avgPnl5 : range === '10' ? avgPnl10 : avgPnl20;
+    const { instrument, shortInstrument, polyQty, noAskPrice, bybitAsk, bybitFee, shortBid, shortFee, avgPnl1, avgPnl5, avgPnl20 } = match;
+    const avgPnl = range === '1' ? avgPnl1 : range === '5' ? avgPnl5 : avgPnl20;
     const totalCost = polyQty * noAskPrice + bybitAsk * bybitQty + bybitFee - shortBid * bybitQty + shortFee;
     const pct = totalCost > 0 ? (avgPnl / totalCost) * 100 : 0;
     const isSelected = vizSelection?.match === match && vizSelection?.range === range;
 
-    const bestForRange = range === '5' ? bestMatchPerRange.b5 : range === '10' ? bestMatchPerRange.b10 : bestMatchPerRange.b20;
+    const bestForRange = range === '1' ? bestMatchPerRange.b1 : range === '5' ? bestMatchPerRange.b5 : bestMatchPerRange.b20;
     const isTopCell = bestForRange?.match === match;
 
     return (
@@ -474,10 +497,10 @@ export function OptimizationScreen({
           <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
             {crypto && <Chip label={crypto} size="small" sx={{ bgcolor: 'rgba(247, 147, 26, 0.1)', color: '#F7931A', border: '1px solid rgba(247, 147, 26, 0.3)' }} />}
             {optionType && <Chip label={optionType === 'hit' ? 'One-Touch Barrier' : 'European Binary'} size="small" sx={{ bgcolor: 'rgba(0, 209, 255, 0.1)', color: '#00D1FF', border: '1px solid rgba(0, 209, 255, 0.3)' }} />}
-            {expiryDate && <Chip label={`Poly: ${expiryDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`} size="small" sx={{ bgcolor: 'rgba(139, 157, 195, 0.1)', color: '#8B9DC3', border: '1px solid rgba(139, 157, 195, 0.2)' }} />}
+            {polyExpiryTs > 0 && <Chip label={`Poly: ${expiryDate?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${fmtTimeUTC1(polyExpiryTs * 1000)}`} size="small" sx={{ bgcolor: 'rgba(74, 144, 217, 0.1)', color: '#4A90D9', border: '1px solid rgba(74, 144, 217, 0.3)' }} />}
             {ttxSec > 0 && <Chip label={`TTX: ${formatTTX(ttxSec)}`} size="small" sx={{ bgcolor: 'rgba(139, 157, 195, 0.1)', color: '#8B9DC3', border: '1px solid rgba(139, 157, 195, 0.2)' }} />}
             {spotPrice > 0 && <Chip label={`Spot: $${spotPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} size="small" sx={{ bgcolor: 'rgba(34, 197, 94, 0.1)', color: '#22C55E', border: '1px solid rgba(34, 197, 94, 0.3)' }} />}
-            {bybitChain && <Chip label={`Bybit: ${bybitChain.expiryLabel}`} size="small" sx={{ bgcolor: 'rgba(255, 140, 0, 0.1)', color: '#FF8C00', border: '1px solid rgba(255, 140, 0, 0.3)' }} />}
+            {bybitChain && <Chip label={`Bybit: ${bybitChain.expiryLabel} ${fmtTimeUTC1(bybitChain.expiryTimestamp)}`} size="small" sx={{ bgcolor: 'rgba(255, 140, 0, 0.1)', color: '#FF8C00', border: '1px solid rgba(255, 140, 0, 0.3)' }} />}
             {/* Bybit quantity input */}
             <Box sx={{
               display: 'flex', alignItems: 'center', gap: 0.5,
@@ -531,8 +554,8 @@ export function OptimizationScreen({
             <TableHead>
               <TableRow sx={{ bgcolor: isDark ? 'rgba(19, 26, 42, 0.5)' : 'rgba(0,0,0,0.03)' }}>
                 <TableCell sx={{ fontWeight: 700, width: '25%', color: '#4A90D9' }}>Poly Strike</TableCell>
+                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±1%</TableCell>
                 <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±5%</TableCell>
-                <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±10%</TableCell>
                 <TableCell sx={{ fontWeight: 700, width: '25%', color: '#22C55E' }}>Best ±20%</TableCell>
               </TableRow>
             </TableHead>
@@ -557,8 +580,8 @@ export function OptimizationScreen({
                         IV: {(result.polyIv * 100).toFixed(0)}%
                       </Typography>
                     </TableCell>
+                    {renderBybitCell(result, result.best1, '1')}
                     {renderBybitCell(result, result.best5, '5')}
-                    {renderBybitCell(result, result.best10, '10')}
                     {renderBybitCell(result, result.best20, '20')}
                   </TableRow>
                 );
@@ -568,19 +591,37 @@ export function OptimizationScreen({
         </TableContainer>
       )}
 
+      {/* Snapshot button — fixed top-right, visible when viz is open */}
+      {vizSelection && (
+        <IconButton
+          onClick={handleSnapshot}
+          title="Save snapshot as JPG"
+          sx={{
+            position: 'fixed', top: 16, right: 64, zIndex: 1300,
+            bgcolor: isDark ? 'rgba(34, 197, 94, 0.12)' : 'rgba(34, 197, 94, 0.1)',
+            color: '#22C55E',
+            '&:hover': { bgcolor: isDark ? 'rgba(34, 197, 94, 0.22)' : 'rgba(34, 197, 94, 0.2)' },
+          }}
+        >
+          <PhotoCamera />
+        </IconButton>
+      )}
+
       {/* Visualization section */}
       {vizSelection && (
-        <VizCard
-          strikeResult={vizSelection.strikeResult}
-          match={vizSelection.match}
-          optionType={optionType}
-          spotPrice={spotPrice}
-          bybitQty={bybitQty}
-          smile={ivSmile}
-          bybitSmile={bybitSmile}
-          polyExpiryTs={polyExpiryTs}
-          cryptoSymbol={crypto ?? 'BTC'}
-        />
+        <Box ref={snapshotRef}>
+          <VizCard
+            strikeResult={vizSelection.strikeResult}
+            match={vizSelection.match}
+            optionType={optionType}
+            spotPrice={spotPrice}
+            bybitQty={bybitQty}
+            smile={ivSmile}
+            bybitSmile={bybitSmile}
+            polyExpiryTs={polyExpiryTs}
+            cryptoSymbol={crypto ?? 'BTC'}
+          />
+        </Box>
       )}
 
       <Typography variant="caption" sx={{ textAlign: 'center', color: 'rgba(139, 157, 195, 0.4)', pb: 1, mt: 'auto' }}>

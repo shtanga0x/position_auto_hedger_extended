@@ -130,8 +130,8 @@ export interface OptMatchResult {
   bybitFee: number;      // Entry fee for long bybit position (total, already × qty)
   shortBid: number;      // Bybit bid price received at entry (short leg)
   shortFee: number;      // Entry fee for short bybit position (total, already × qty)
+  avgPnl1: number;       // Average combined 3-leg P&L in ±1% range
   avgPnl5: number;       // Average combined 3-leg P&L in ±5% range
-  avgPnl10: number;      // Average combined 3-leg P&L in ±10% range
   avgPnl20: number;      // Average combined 3-leg P&L in ±20% range
   tauPolyRem: number;    // Poly time-to-expiry remaining at evaluation (years)
   tauBybitRem: number;   // Bybit time-to-expiry remaining at evaluation (years)
@@ -142,7 +142,7 @@ export interface StrikeOptResult {
   market: ParsedMarket;
   isUpBarrier: boolean;
   polyIv: number;        // Calibrated IV for this poly strike at current spot
+  best1: OptMatchResult | null;   // Best match ranked by avgPnl1
   best5: OptMatchResult | null;   // Best match ranked by avgPnl5
-  best10: OptMatchResult | null;  // Best match ranked by avgPnl10
   best20: OptMatchResult | null;  // Best match ranked by avgPnl20
 }
