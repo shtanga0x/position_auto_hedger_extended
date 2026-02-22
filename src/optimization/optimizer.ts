@@ -80,12 +80,17 @@ export function runOptimization(
       shortInst = below[0] ?? null;
     }
 
-    if (!shortInst) continue; // no valid short strike available
+    if (!shortInst) {
+      results.push({ market, isUpBarrier, polyIv, best5: null, best10: null, best20: null });
+      continue;
+    }
 
     const shortTicker = bybitChain.tickers.get(shortInst.symbol);
-    if (!shortTicker) continue;
-    const shortBid = shortTicker.bid1Price;
-    if (shortBid <= 0 || shortTicker.markIv <= 0) continue;
+    const shortBid = shortTicker?.bid1Price ?? 0;
+    if (!shortTicker || shortBid <= 0 || shortTicker.markIv <= 0) {
+      results.push({ market, isUpBarrier, polyIv, best5: null, best10: null, best20: null });
+      continue;
+    }
 
     const shortFee = bybitTradingFee(spotPrice, shortBid, bybitQty);
 
