@@ -1,7 +1,6 @@
 import axios from 'axios';
 import type { CryptoOption } from '../types';
-
-const BINANCE_API_BASE = 'https://api.binance.com/api/v3';
+import { API_CONFIG } from './config';
 
 const CRYPTO_SYMBOLS: Record<CryptoOption, string> = {
   BTC: 'BTCUSDT',
@@ -13,7 +12,7 @@ const CRYPTO_SYMBOLS: Record<CryptoOption, string> = {
 /** Fetch current spot price for a crypto asset */
 export async function fetchCurrentPrice(crypto: CryptoOption): Promise<number> {
   const symbol = CRYPTO_SYMBOLS[crypto];
-  const response = await axios.get(`${BINANCE_API_BASE}/ticker/price`, {
+  const response = await axios.get(`${API_CONFIG.BINANCE_API_BASE}/api/v3/ticker/price`, {
     params: { symbol },
   });
   return parseFloat(response.data.price);

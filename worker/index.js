@@ -11,6 +11,7 @@ const ROUTES = {
   '/api/gamma': 'https://gamma-api.polymarket.com',
   '/api/clob': 'https://clob.polymarket.com',
   '/api/bybit': 'https://api.bybit.com',
+  '/api/binance': 'https://api.binance.com',
 };
 
 // CORS заголовки для ответов

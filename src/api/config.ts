@@ -16,6 +16,7 @@ export const API_CONFIG = {
   GAMMA_API_BASE: isDev ? '/api/gamma' : `${WORKER_URL}/api/gamma`,
   CLOB_API_BASE: isDev ? '/api/clob' : `${WORKER_URL}/api/clob`,
   BYBIT_API_BASE: isDev ? '/api/bybit' : `${WORKER_URL}/api/bybit`,
+  BINANCE_API_BASE: isDev ? '/api/binance' : `${WORKER_URL}/api/binance`,
 };
 
 // Для отладки
