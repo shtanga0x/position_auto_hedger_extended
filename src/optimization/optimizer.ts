@@ -1,4 +1,4 @@
-import type { ParsedMarket, OptionType, BybitOptionChain, OptMatchResult, StrikeOptResult } from '../types';
+import type { ParsedMarket, OptionType, BybitOptionChain, BybitInstrument, OptMatchResult, StrikeOptResult } from '../types';
 import { priceHit, priceAbove, bsPrice, bybitTradingFee, solveImpliedVol, autoH } from '../pricing/engine';
 
 const YEAR_SEC = 365.25 * 24 * 3600;
@@ -9,15 +9,16 @@ const FEASIBILITY_EPSILON = -0.001;
 /**
  * Run optimization for all Polymarket strikes against a Bybit option chain.
  *
- * For each Polymarket strike (HIT type):
- *   - Direction: isUpBarrier = strikePrice > spotPrice → use CALL options
- *   - For each matching Bybit option (same direction):
- *     - Fix bybit qty = 0.01
- *     - Evaluate at earlier of poly/bybit expiry
- *     - Derive poly qty so combined P&L = 0 at the poly strike (hedge constraint)
- *     - Feasibility: no negative combined P&L in ±20% range around poly strike
- *     - Score: average combined P&L in ±5%, ±10%, ±20% ranges
- *   - Keep best option per range
+ * 3-leg position:
+ *   1. Poly NO (sized by hedge constraint so combined P&L ≈ 0 at poly strike)
+ *   2. Long Bybit option (CALL for up-barrier, PUT for down-barrier) — any strike
+ *   3. Short Bybit option at the Polymarket strike price (or nearest valid strike):
+ *        - CALL: sell CALL at lowest available strike >= K_poly
+ *        - PUT:  sell PUT at highest available strike <= K_poly
+ *      This converts unlimited option profit into a spread centred on K_poly.
+ *
+ * Feasibility: no negative combined 3-leg P&L in ±20% around spot price.
+ * Score: average 3-leg P&L in ±5%, ±10%, ±20% ranges around spot price.
  */
 export function runOptimization(
   polyMarkets: ParsedMarket[],
@@ -39,7 +40,6 @@ export function runOptimization(
     const matchingType = isUpBarrier ? 'Call' : 'Put';
 
     // NO ask price: what we pay to buy the NO side at market
-    // For YES bid = market.bestBid, NO ask = 1 - YES bid
     const noAskPrice = market.bestBid != null
       ? (1 - market.bestBid)
       : (1 - market.currentPrice);
@@ -55,14 +55,44 @@ export function runOptimization(
     );
     if (polyIv === null || polyIv <= 0) continue;
 
+    // --- Find the short option leg (fixed to K_poly or nearest valid strike) ---
+    // CALL (up-barrier): sell CALL at lowest available strike >= K_poly
+    // PUT  (down-barrier): sell PUT at highest available strike <= K_poly
+    const K = market.strikePrice;
+    const sameTypeCandidates = bybitChain.instruments.filter(i => i.optionsType === matchingType);
+
+    let shortInst: BybitInstrument | null = null;
+    if (isUpBarrier) {
+      const above = sameTypeCandidates
+        .filter(i => i.strike >= K)
+        .sort((a, b) => a.strike - b.strike);
+      shortInst = above[0] ?? null;
+    } else {
+      const below = sameTypeCandidates
+        .filter(i => i.strike <= K)
+        .sort((a, b) => b.strike - a.strike);
+      shortInst = below[0] ?? null;
+    }
+
+    if (!shortInst) continue; // no valid short strike available
+
+    const shortTicker = bybitChain.tickers.get(shortInst.symbol);
+    if (!shortTicker) continue;
+    const shortBid = shortTicker.bid1Price;
+    if (shortBid <= 0 || shortTicker.markIv <= 0) continue;
+
+    const shortFee = bybitTradingFee(spotPrice, shortBid, bybitQty);
+
     let best5: OptMatchResult | null = null;
     let best10: OptMatchResult | null = null;
     let best20: OptMatchResult | null = null;
 
-    // Filter instruments to matching option type only
-    const candidates = bybitChain.instruments.filter(inst => inst.optionsType === matchingType);
+    // Filter long-leg candidates (same option type, different from short leg)
+    const longCandidates = sameTypeCandidates.filter(
+      inst => inst.symbol !== shortInst!.symbol,
+    );
 
-    for (const inst of candidates) {
+    for (const inst of longCandidates) {
       const ticker = bybitChain.tickers.get(inst.symbol);
       if (!ticker) continue;
 
@@ -74,29 +104,36 @@ export function runOptimization(
 
       // Evaluate at earlier expiry
       const tauEval = Math.min(tauPoly, tauBybit);
-      const tauPolyRem = tauPoly - tauEval;   // poly time remaining at eval
-      const tauBybitRem = tauBybit - tauEval; // bybit time remaining at eval
+      const tauPolyRem = tauPoly - tauEval;
+      const tauBybitRem = tauBybit - tauEval;
 
-      // Entry fee for 0.01 bybit contracts
+      // Entry fees
       const bybitFee = bybitTradingFee(spotPrice, bybitAsk, bybitQty);
 
-      // Bybit option value at poly strike at evaluation time
-      const bybitValueAtStrike = bsPrice(
-        market.strikePrice, inst.strike, ticker.markIv, tauBybitRem, inst.optionsType,
+      // Long option value at poly strike at evaluation time
+      const longValueAtStrike = bsPrice(
+        K, inst.strike, ticker.markIv, tauBybitRem, inst.optionsType,
       );
-      const bybitProfitAtStrike = (bybitValueAtStrike - bybitAsk) * bybitQty - bybitFee;
+      const longProfitAtStrike = (longValueAtStrike - bybitAsk) * bybitQty - bybitFee;
 
-      // Skip if bybit can't profit at the poly strike (no hedge value)
-      if (bybitProfitAtStrike <= 0) continue;
+      // Short option P&L at poly strike at evaluation time
+      const shortValueAtStrike = bsPrice(
+        K, shortInst.strike, shortTicker.markIv, tauBybitRem, shortInst.optionsType,
+      );
+      const shortPnlAtStrike = (shortBid - shortValueAtStrike) * bybitQty - shortFee;
 
-      // Hedge constraint: polyLoss(at strike) + bybitProfit(at strike) = 0
-      // Poly NO position: at barrier hit, YES=1, NO value=0, loss = noAskPrice × polyQty
-      // ⇒ polyQty = bybitProfitAtStrike / noAskPrice
-      const polyQty = bybitProfitAtStrike / noAskPrice;
+      // Net option profit at the poly strike (used for hedge constraint)
+      const netOptionProfitAtStrike = longProfitAtStrike + shortPnlAtStrike;
+
+      // Skip if net option profit is non-positive at the barrier (no hedge value)
+      if (netOptionProfitAtStrike <= 0) continue;
+
+      // Hedge constraint: polyLoss(at strike) + netOptionProfit(at strike) = 0
+      // At barrier hit: YES=1, NO=0, poly loss = noAskPrice × polyQty
+      const polyQty = netOptionProfitAtStrike / noAskPrice;
       if (polyQty <= 0) continue;
 
       // Build P&L grid over ±20% around current spot price
-      const K = market.strikePrice;
       const lower = 0.8 * spotPrice;
       const upper = 1.2 * spotPrice;
       const step = (upper - lower) / (NUM_GRID - 1);
@@ -110,7 +147,6 @@ export function runOptimization(
         // Poly NO position P&L at evaluation time
         let polyYes: number;
         if (tauPolyRem <= 0) {
-          // Poly has expired: use step function
           if (optionType === 'above') {
             polyYes = S >= K ? 1 : 0;
           } else {
@@ -124,11 +160,15 @@ export function runOptimization(
         }
         const polyPnl = ((1 - polyYes) - noAskPrice) * polyQty;
 
-        // Bybit position P&L at evaluation time
-        const bybitValue = bsPrice(S, inst.strike, ticker.markIv, tauBybitRem, inst.optionsType);
-        const bybitPnl = (bybitValue - bybitAsk) * bybitQty - bybitFee;
+        // Long Bybit option P&L
+        const longValue = bsPrice(S, inst.strike, ticker.markIv, tauBybitRem, inst.optionsType);
+        const longPnl = (longValue - bybitAsk) * bybitQty - bybitFee;
 
-        const combined = polyPnl + bybitPnl;
+        // Short Bybit option P&L (sell side)
+        const shortValue = bsPrice(S, shortInst.strike, shortTicker.markIv, tauBybitRem, shortInst.optionsType);
+        const shortPnl = (shortBid - shortValue) * bybitQty - shortFee;
+
+        const combined = polyPnl + longPnl + shortPnl;
         gridPnl[i] = combined;
 
         if (combined < FEASIBILITY_EPSILON) {
@@ -139,7 +179,7 @@ export function runOptimization(
 
       if (!feasible) continue;
 
-      // Compute average P&L in each range
+      // Compute average P&L in each range around spot price
       const avgInRange = (lo: number, hi: number): number => {
         let sum = 0;
         let count = 0;
@@ -153,17 +193,21 @@ export function runOptimization(
         return count > 0 ? sum / count : 0;
       };
 
-      const avgPnl5 = avgInRange(0.95 * spotPrice, 1.05 * spotPrice);
+      const avgPnl5  = avgInRange(0.95 * spotPrice, 1.05 * spotPrice);
       const avgPnl10 = avgInRange(0.90 * spotPrice, 1.10 * spotPrice);
       const avgPnl20 = avgInRange(0.80 * spotPrice, 1.20 * spotPrice);
 
       const match: OptMatchResult = {
         instrument: inst,
         ticker,
+        shortInstrument: shortInst,
+        shortTicker,
         polyQty,
         noAskPrice,
         bybitAsk,
         bybitFee,
+        shortBid,
+        shortFee,
         avgPnl5,
         avgPnl10,
         avgPnl20,
@@ -172,9 +216,9 @@ export function runOptimization(
         tauEval,
       };
 
-      if (best5 === null || avgPnl5 > best5.avgPnl5) best5 = match;
-      if (best10 === null || avgPnl10 > best10.avgPnl10) best10 = match;
-      if (best20 === null || avgPnl20 > best20.avgPnl20) best20 = match;
+      if (best5  === null || avgPnl5  > best5.avgPnl5)   best5  = match;
+      if (best10 === null || avgPnl10 > best10.avgPnl10)  best10 = match;
+      if (best20 === null || avgPnl20 > best20.avgPnl20)  best20 = match;
     }
 
     results.push({ market, isUpBarrier, polyIv, best5, best10, best20 });

@@ -120,15 +120,19 @@ export interface PolymarketPosition extends SelectedStrike {
 // --- Optimization types ---
 
 export interface OptMatchResult {
-  instrument: BybitInstrument;
+  instrument: BybitInstrument;     // Long Bybit option (buy leg)
   ticker: BybitTicker;
+  shortInstrument: BybitInstrument; // Short Bybit option at poly strike (sell leg)
+  shortTicker: BybitTicker;
   polyQty: number;       // Polymarket NO quantity derived from hedge constraint
   noAskPrice: number;    // Entry price for Polymarket NO position
-  bybitAsk: number;      // Bybit ask price at entry
-  bybitFee: number;      // Entry fee for bybit position (total, already × qty)
-  avgPnl5: number;       // Average combined P&L in ±5% range
-  avgPnl10: number;      // Average combined P&L in ±10% range
-  avgPnl20: number;      // Average combined P&L in ±20% range
+  bybitAsk: number;      // Bybit ask price at entry (long leg)
+  bybitFee: number;      // Entry fee for long bybit position (total, already × qty)
+  shortBid: number;      // Bybit bid price received at entry (short leg)
+  shortFee: number;      // Entry fee for short bybit position (total, already × qty)
+  avgPnl5: number;       // Average combined 3-leg P&L in ±5% range
+  avgPnl10: number;      // Average combined 3-leg P&L in ±10% range
+  avgPnl20: number;      // Average combined 3-leg P&L in ±20% range
   tauPolyRem: number;    // Poly time-to-expiry remaining at evaluation (years)
   tauBybitRem: number;   // Bybit time-to-expiry remaining at evaluation (years)
   tauEval: number;       // Time until evaluation point from now (years)

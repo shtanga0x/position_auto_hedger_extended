@@ -45,7 +45,7 @@ export function SetupScreen({
           background: 'linear-gradient(90deg, #E8EDF5 0%, #00D1FF 100%)',
           backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
         }}>
-          Grapher V4
+          Grapher V5
         </Typography>
         <Typography variant="body2" color="text.secondary">
           Find optimal Bybit hedges for each Polymarket strike

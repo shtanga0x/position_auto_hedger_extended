@@ -8,7 +8,7 @@ const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 export default defineConfig({
   plugins: [react()],
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
-  base: process.env.GITHUB_ACTIONS ? '/grapher_v4/' : '/',
+  base: process.env.GITHUB_ACTIONS ? '/grapher_v5/' : '/',
   server: {
     proxy: {
       '/api/gamma': {

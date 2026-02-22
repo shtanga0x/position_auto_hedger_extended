@@ -1,8 +1,8 @@
 {
-  "name": "grapher-v4",
+  "name": "grapher-v5",
   "private": true,
-  "version": "4.0.5",
-  "description": "Polymarket + Bybit options optimization tool — find optimal Bybit hedges for each Polymarket strike",
+  "version": "5.0.0",
+  "description": "Polymarket + Bybit options optimizer with 3-leg spread — poly NO + long option + short option at poly strike",
   "type": "module",
   "scripts": {
     "dev": "vite",
