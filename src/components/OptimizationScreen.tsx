@@ -15,7 +15,7 @@ import {
   Slider,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { ArrowBack, BarChart, PhotoCamera } from '@mui/icons-material';
+import { ArrowBack, BarChart, PhotoCamera, OpenInNew } from '@mui/icons-material';
 import type {
   CryptoOption,
   OptionType,
@@ -338,6 +338,42 @@ export function OptimizationScreen({
     setVizSelection(null);
   }, [bybitQty]);
 
+  const handleTransferToHedger = useCallback(() => {
+    if (!vizSelection || !bybitChain) return;
+    const { match, strikeResult } = vizSelection;
+    const { instrument, shortInstrument, polyQty } = match;
+    const { market } = strikeResult;
+    const payload = {
+      version: '3.1.0',
+      savedAt: new Date().toISOString(),
+      spotPrice,
+      hDelta: 0,
+      priceRange: [spotPrice * 0.75, spotPrice * 1.25],
+      polyPriceMode: 'ask',
+      optionType,
+      crypto,
+      polyEvent: polyEvent ? {
+        id: polyEvent.id, slug: polyEvent.slug, title: polyEvent.title,
+        description: (polyEvent as { description?: string }).description ?? '',
+        startDate: polyEvent.startDate, endDate: polyEvent.endDate,
+      } : null,
+      polyMarkets,
+      polySelections: [{ marketId: market.id, side: 'NO', quantity: polyQty }],
+      bybitChain: {
+        expiryLabel: bybitChain.expiryLabel,
+        expiryTimestamp: bybitChain.expiryTimestamp,
+        instruments: bybitChain.instruments,
+        tickers: Array.from(bybitChain.tickers.values()),
+      },
+      bybitSelections: [
+        { symbol: instrument.symbol, side: 'buy', quantity: bybitQty },
+        { symbol: shortInstrument.symbol, side: 'sell', quantity: bybitQty },
+      ],
+    };
+    localStorage.setItem('position_hedger_transfer', JSON.stringify(payload));
+    window.open('https://shtanga0x.github.io/position_hedger/', '_blank');
+  }, [vizSelection, bybitChain, polyEvent, polyMarkets, optionType, crypto, spotPrice, bybitQty]);
+
   const nowSec = useMemo(() => Math.floor(Date.now() / 1000), []);
 
   const optResults = useMemo(() => {
@@ -589,6 +625,22 @@ export function OptimizationScreen({
             </TableBody>
           </Table>
         </TableContainer>
+      )}
+
+      {/* Transfer to position_hedger button — fixed top-right, visible when viz is open */}
+      {vizSelection && (
+        <IconButton
+          onClick={handleTransferToHedger}
+          title="Open in position_hedger"
+          sx={{
+            position: 'fixed', top: 16, right: 112, zIndex: 1300,
+            bgcolor: isDark ? 'rgba(74, 144, 217, 0.12)' : 'rgba(74, 144, 217, 0.1)',
+            color: '#4A90D9',
+            '&:hover': { bgcolor: isDark ? 'rgba(74, 144, 217, 0.22)' : 'rgba(74, 144, 217, 0.2)' },
+          }}
+        >
+          <OpenInNew />
+        </IconButton>
       )}
 
       {/* Snapshot button — fixed top-right, visible when viz is open */}
