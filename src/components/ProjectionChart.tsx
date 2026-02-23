@@ -35,6 +35,9 @@ interface ProjectionChartProps {
   currentCryptoPrice: number;
   cryptoSymbol: string;
   totalEntryCost?: number;
+  polyAtBybitExpiryCurve?: ProjectionPoint[];
+  polyEntryCost?: number;
+  bybitEntryCost?: number;
 }
 
 interface ChartDataRow {
@@ -94,6 +97,7 @@ function CustomXTick(props: {
 // All line keys for the chart
 const POLY_NOW = 'Poly Now';
 const POLY_EXPIRY = 'Poly Expiry';
+const POLY_OPTION_EXPIRY = 'Poly Option Expiry';
 const BYBIT_NOW = 'Bybit Now';
 const BYBIT_EXPIRY = 'Bybit Expiry';
 
@@ -137,9 +141,12 @@ function CustomTooltipContent({
   tooltipBorder,
   secondaryColor,
   hasPolyOverlay,
+  hasPolyAtBybitExpiry,
   hasBybitOverlay,
   lineStyles,
   totalEntryCost,
+  polyEntryCost,
+  bybitEntryCost,
 }: {
   active?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -153,9 +160,12 @@ function CustomTooltipContent({
   tooltipBorder: string;
   secondaryColor: string;
   hasPolyOverlay: boolean;
+  hasPolyAtBybitExpiry: boolean;
   hasBybitOverlay: boolean;
   lineStyles: Map<string, LineStyle>;
   totalEntryCost?: number;
+  polyEntryCost?: number;
+  bybitEntryCost?: number;
 }) {
   if (!active || !payload || payload.length === 0) return null;
 
@@ -175,11 +185,25 @@ function CustomTooltipContent({
   }
 
   const absCost = Math.abs(totalEntryCost ?? 0);
+  const absPolyCost = Math.abs(polyEntryCost ?? 0);
+  const absBybitCost = Math.abs(bybitEntryCost ?? 0);
 
   // Compute absolute P&L as % of entry cost
   function absPct(pnl: number): string {
     if (absCost <= 0) return '';
     const pct = (pnl / absCost) * 100;
+    const sign = pct >= 0 ? '+' : '';
+    return ` (${sign}${pct.toFixed(1)}%)`;
+  }
+  function polyPct(pnl: number): string {
+    if (absPolyCost <= 0) return '';
+    const pct = (pnl / absPolyCost) * 100;
+    const sign = pct >= 0 ? '+' : '';
+    return ` (${sign}${pct.toFixed(1)}%)`;
+  }
+  function bybitPct(pnl: number): string {
+    if (absBybitCost <= 0) return '';
+    const pct = (pnl / absBybitCost) * 100;
     const sign = pct >= 0 ? '+' : '';
     return ` (${sign}${pct.toFixed(1)}%)`;
   }
@@ -215,23 +239,25 @@ function CustomTooltipContent({
         return renderRow(label, pnl, color, lineStyles.get(label), color, absPct(pnl));
       })}
 
-      {/* Poly overlay — both show absolute % */}
+      {/* Poly overlay — use poly entry cost for % */}
       {hasPolyOverlay && (
         <>
           {!hiddenLines.has(POLY_NOW) && valueMap.has(POLY_NOW) &&
-            renderRow(POLY_NOW, valueMap.get(POLY_NOW)!, POLY_BLUE, lineStyles.get(POLY_NOW), undefined, absPct(valueMap.get(POLY_NOW)!))}
+            renderRow(POLY_NOW, valueMap.get(POLY_NOW)!, POLY_BLUE, lineStyles.get(POLY_NOW), undefined, polyPct(valueMap.get(POLY_NOW)!))}
           {!hiddenLines.has(POLY_EXPIRY) && valueMap.has(POLY_EXPIRY) &&
-            renderRow(POLY_EXPIRY, valueMap.get(POLY_EXPIRY)!, POLY_BLUE, lineStyles.get(POLY_EXPIRY), undefined, absPct(valueMap.get(POLY_EXPIRY)!))}
+            renderRow(POLY_EXPIRY, valueMap.get(POLY_EXPIRY)!, POLY_BLUE, lineStyles.get(POLY_EXPIRY), undefined, polyPct(valueMap.get(POLY_EXPIRY)!))}
+          {hasPolyAtBybitExpiry && !hiddenLines.has(POLY_OPTION_EXPIRY) && valueMap.has(POLY_OPTION_EXPIRY) &&
+            renderRow(POLY_OPTION_EXPIRY, valueMap.get(POLY_OPTION_EXPIRY)!, POLY_BLUE, lineStyles.get(POLY_OPTION_EXPIRY), undefined, polyPct(valueMap.get(POLY_OPTION_EXPIRY)!))}
         </>
       )}
 
-      {/* Bybit overlay — both show absolute % */}
+      {/* Bybit overlay — use bybit entry cost for % */}
       {hasBybitOverlay && (
         <>
           {!hiddenLines.has(BYBIT_NOW) && valueMap.has(BYBIT_NOW) &&
-            renderRow(BYBIT_NOW, valueMap.get(BYBIT_NOW)!, BYBIT_ORANGE, lineStyles.get(BYBIT_NOW), undefined, absPct(valueMap.get(BYBIT_NOW)!))}
+            renderRow(BYBIT_NOW, valueMap.get(BYBIT_NOW)!, BYBIT_ORANGE, lineStyles.get(BYBIT_NOW), undefined, bybitPct(valueMap.get(BYBIT_NOW)!))}
           {!hiddenLines.has(BYBIT_EXPIRY) && valueMap.has(BYBIT_EXPIRY) &&
-            renderRow(BYBIT_EXPIRY, valueMap.get(BYBIT_EXPIRY)!, BYBIT_ORANGE, lineStyles.get(BYBIT_EXPIRY), undefined, absPct(valueMap.get(BYBIT_EXPIRY)!))}
+            renderRow(BYBIT_EXPIRY, valueMap.get(BYBIT_EXPIRY)!, BYBIT_ORANGE, lineStyles.get(BYBIT_EXPIRY), undefined, bybitPct(valueMap.get(BYBIT_EXPIRY)!))}
         </>
       )}
     </div>
@@ -245,6 +271,9 @@ export function ProjectionChart({
   polyExpiryCurve,
   bybitNowCurve,
   bybitExpiryCurve,
+  polyAtBybitExpiryCurve,
+  polyEntryCost,
+  bybitEntryCost,
   currentCryptoPrice,
   cryptoSymbol,
   totalEntryCost,
@@ -264,6 +293,7 @@ export function ProjectionChart({
 
   const hasPolyOverlay = (polyNowCurve && polyNowCurve.length > 0) || false;
   const hasBybitOverlay = (bybitNowCurve && bybitNowCurve.length > 0) || false;
+  const hasPolyAtBybitExpiry = (polyAtBybitExpiryCurve && polyAtBybitExpiryCurve.length > 0) || false;
 
   const chartData = useMemo(() => {
     if (combinedCurves.length === 0 || combinedCurves[0].length === 0) return [];
@@ -286,6 +316,7 @@ export function ProjectionChart({
       // Poly overlay (solid color, no split)
       if (polyNowCurve?.[i]) row[POLY_NOW] = polyNowCurve[i].pnl;
       if (polyExpiryCurve?.[i]) row[POLY_EXPIRY] = polyExpiryCurve[i].pnl;
+      if (hasPolyAtBybitExpiry && polyAtBybitExpiryCurve?.[i]) row[POLY_OPTION_EXPIRY] = polyAtBybitExpiryCurve[i].pnl;
 
       // Bybit overlay
       if (bybitNowCurve?.[i]) row[BYBIT_NOW] = bybitNowCurve[i].pnl;
@@ -310,7 +341,7 @@ export function ProjectionChart({
     }
 
     return data;
-  }, [combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve]);
+  }, [combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, polyAtBybitExpiryCurve, bybitNowCurve, bybitExpiryCurve, hasPolyAtBybitExpiry]);
 
   // Collect all visible pnl values for Y domain
   const { yDomain, yTicks } = useMemo(() => {
@@ -336,6 +367,7 @@ export function ProjectionChart({
 
     addPoints(polyNowCurve, POLY_NOW);
     addPoints(polyExpiryCurve, POLY_EXPIRY);
+    addPoints(polyAtBybitExpiryCurve, POLY_OPTION_EXPIRY);
     addPoints(bybitNowCurve, BYBIT_NOW);
     addPoints(bybitExpiryCurve, BYBIT_EXPIRY);
 
@@ -354,7 +386,7 @@ export function ProjectionChart({
     ticks.sort((a, b) => a - b);
 
     return { yDomain: domain, yTicks: ticks };
-  }, [combinedCurves, combinedLabels, hiddenLines, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve]);
+  }, [combinedCurves, combinedLabels, hiddenLines, polyNowCurve, polyExpiryCurve, polyAtBybitExpiryCurve, bybitNowCurve, bybitExpiryCurve]);
 
   const { allTicks, majorInterval, minorInterval, xDomain } = useMemo(() => {
     if (chartData.length === 0) return { allTicks: [], majorInterval: 1000, minorInterval: 100, xDomain: [0, 1] };
@@ -394,6 +426,21 @@ export function ProjectionChart({
     });
   }, []);
 
+  const allLineLabels = useMemo(() => {
+    const labels = [...combinedLabels];
+    if (hasPolyOverlay) {
+      labels.push(POLY_NOW, POLY_EXPIRY);
+      if (hasPolyAtBybitExpiry) labels.push(POLY_OPTION_EXPIRY);
+    }
+    if (hasBybitOverlay) labels.push(BYBIT_NOW, BYBIT_EXPIRY);
+    return labels;
+  }, [combinedLabels, hasPolyOverlay, hasPolyAtBybitExpiry, hasBybitOverlay]);
+
+  const isAllVisible = hiddenLines.size === 0;
+  const handleToggleAll = useCallback(() => {
+    setHiddenLines(isAllVisible ? new Set(allLineLabels) : new Set());
+  }, [isAllVisible, allLineLabels]);
+
 
   const renderTick = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -416,13 +463,15 @@ export function ProjectionChart({
     if (hasPolyOverlay) {
       styles.set(POLY_NOW, { color: POLY_BLUE, width: 2, opacity: 0.8 });
       styles.set(POLY_EXPIRY, { color: POLY_BLUE, dash: '14 6', width: 2, opacity: 0.6 });
+      if (hasPolyAtBybitExpiry)
+        styles.set(POLY_OPTION_EXPIRY, { color: POLY_BLUE, dash: '8 5', width: 2, opacity: 0.7 });
     }
     if (hasBybitOverlay) {
       styles.set(BYBIT_NOW, { color: BYBIT_ORANGE, width: 2, opacity: 0.8 });
       styles.set(BYBIT_EXPIRY, { color: BYBIT_ORANGE, dash: '14 6', width: 2, opacity: 0.6 });
     }
     return styles;
-  }, [combinedLabels, hasPolyOverlay, hasBybitOverlay]);
+  }, [combinedLabels, hasPolyOverlay, hasPolyAtBybitExpiry, hasBybitOverlay]);
 
   const renderTooltip = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -437,12 +486,15 @@ export function ProjectionChart({
         tooltipBorder={tooltipBorder}
         secondaryColor={axisColor}
         hasPolyOverlay={hasPolyOverlay}
+        hasPolyAtBybitExpiry={hasPolyAtBybitExpiry}
         hasBybitOverlay={hasBybitOverlay}
         lineStyles={lineStyles}
         totalEntryCost={totalEntryCost}
+        polyEntryCost={polyEntryCost}
+        bybitEntryCost={bybitEntryCost}
       />
     ),
-    [combinedLabels, cryptoSymbol, hiddenLines, currentCryptoPrice, tooltipBg, tooltipBorder, axisColor, hasPolyOverlay, hasBybitOverlay, lineStyles, totalEntryCost]
+    [combinedLabels, cryptoSymbol, hiddenLines, currentCryptoPrice, tooltipBg, tooltipBorder, axisColor, hasPolyOverlay, hasPolyAtBybitExpiry, hasBybitOverlay, lineStyles, totalEntryCost, polyEntryCost, bybitEntryCost]
   );
 
   if (chartData.length === 0) return null;
@@ -461,6 +513,8 @@ export function ProjectionChart({
   if (hasPolyOverlay) {
     legendItems.push({ label: POLY_NOW, color: POLY_BLUE, width: 2 });
     legendItems.push({ label: POLY_EXPIRY, color: POLY_BLUE, dash: '14 6', width: 2 });
+    if (hasPolyAtBybitExpiry)
+      legendItems.push({ label: POLY_OPTION_EXPIRY, color: POLY_BLUE, dash: '8 5', width: 2 });
   }
   if (hasBybitOverlay) {
     legendItems.push({ label: BYBIT_NOW, color: BYBIT_ORANGE, width: 2 });
@@ -576,6 +630,14 @@ export function ProjectionChart({
                 hide={hiddenLines.has(POLY_EXPIRY)} strokeOpacity={hiddenLines.has(POLY_EXPIRY) ? 0.15 : 0.6}
                 legendType="none"
               />
+              {hasPolyAtBybitExpiry && (
+                <Line
+                  yAxisId="left" type="linear" dataKey={POLY_OPTION_EXPIRY} name={POLY_OPTION_EXPIRY}
+                  stroke={POLY_BLUE} strokeWidth={2} strokeDasharray="8 5" dot={false} activeDot={ACTIVE_DOT}
+                  hide={hiddenLines.has(POLY_OPTION_EXPIRY)} strokeOpacity={hiddenLines.has(POLY_OPTION_EXPIRY) ? 0.15 : 0.7}
+                  legendType="none"
+                />
+              )}
             </>
           )}
 
@@ -600,7 +662,7 @@ export function ProjectionChart({
       </ResponsiveContainer>
 
       {/* Custom legend */}
-      <div style={{ display: 'flex', justifyContent: 'center', gap: 20, paddingTop: 12, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 20, paddingTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         {legendItems.map(item => (
           <div
             key={item.label}
@@ -629,6 +691,16 @@ export function ProjectionChart({
             <span style={{ color: legendColor, fontSize: 14 }}>{item.label}</span>
           </div>
         ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ width: 1, height: 16, background: legendColor, opacity: 0.3 }} />
+          <button onClick={handleToggleAll} style={{
+            background: 'transparent', border: `1px solid ${legendColor}`,
+            color: legendColor, fontSize: 13, padding: '2px 10px', borderRadius: 4,
+            cursor: 'pointer', opacity: 0.8,
+          }}>
+            {isAllVisible ? 'Hide All' : 'Show All'}
+          </button>
+        </div>
       </div>
     </div>
   );

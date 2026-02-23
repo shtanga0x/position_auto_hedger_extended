@@ -31,6 +31,9 @@ interface PortfolioCurvesOutput {
   polyExpiryCurve: ProjectionPoint[];
   bybitNowCurve: ProjectionPoint[];
   bybitExpiryCurve: ProjectionPoint[];
+  polyAtBybitExpiryCurve: ProjectionPoint[];
+  polyEntryCost: number;
+  bybitEntryCost: number;
   totalEntryCost: number;
   totalFees: number;
 }
@@ -179,6 +182,9 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       polyExpiryCurve: [],
       bybitNowCurve: [],
       bybitExpiryCurve: [],
+      polyAtBybitExpiryCurve: [],
+      polyEntryCost: 0,
+      bybitEntryCost: 0,
       totalEntryCost: 0,
       totalFees: 0,
     };
@@ -235,12 +241,30 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     const bybitNowCurve = computeBybitOnlyCurve(bybitPositions, grid, bybitTausNow, bybitSmile);
     const bybitExpiryCurve = computeBybitOnlyCurve(bybitPositions, grid, bybitTausExpiry, bybitSmile);
 
+    // Poly at Bybit option expiry (only when Bybit expires before Poly)
+    const bybitEarliestExpirySec = bybitPositions.length > 0
+      ? Math.min(...bybitPositions.map(p => p.expiryTimestamp)) / 1000
+      : 0;
+    const polyTauAtBybitExpiry = (bybitEarliestExpirySec > 0 && polyExpiryTs > bybitEarliestExpirySec)
+      ? Math.max((polyExpiryTs - bybitEarliestExpirySec) / YEAR_SEC, 0)
+      : -1; // sentinel: -1 means "don't show"
+    const polyAtBybitExpiryCurve = polyTauAtBybitExpiry >= 0
+      ? computePolyOnlyCurve(polyPositions, grid, polyTauAtBybitExpiry, optionType, autoH(polyTauAtBybitExpiry, deltaH), smile)
+      : [];
+
     // Total entry cost and fees
     let totalEntryCost = 0;
     let totalFees = 0;
-    for (const p of polyPositions) totalEntryCost += p.entryPrice * p.quantity;
+    let polyEntryCost = 0;
+    let bybitEntryCost = 0;
+    for (const p of polyPositions) {
+      totalEntryCost += p.entryPrice * p.quantity;
+      polyEntryCost += p.entryPrice * p.quantity;
+    }
     for (const b of bybitPositions) {
       totalEntryCost += b.entryPrice * b.quantity; // always positive: premium is margin cost for sell too
+      const mult = b.side === 'buy' ? 1 : -1;
+      bybitEntryCost += b.entryPrice * mult * b.quantity;
       totalFees += b.entryFee;
     }
 
@@ -251,6 +275,9 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       polyExpiryCurve,
       bybitNowCurve,
       bybitExpiryCurve,
+      polyAtBybitExpiryCurve,
+      polyEntryCost,
+      bybitEntryCost,
       totalEntryCost,
       totalFees,
     };

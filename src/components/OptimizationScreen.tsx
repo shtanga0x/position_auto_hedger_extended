@@ -146,7 +146,7 @@ function VizCard({
   const nowTs = useMemo(() => Math.floor(Date.now() / 1000), []);
   const polyTauNow = Math.max((polyExpiryTs - nowTs) / (365.25 * 24 * 3600), 0);
 
-  const { combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve, totalEntryCost } = usePortfolioCurves({
+  const { combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve, polyAtBybitExpiryCurve, polyEntryCost, bybitEntryCost, totalEntryCost } = usePortfolioCurves({
     polyPositions: [polyPos],
     bybitPositions: [longBybitPos, shortBybitPos],
     lowerPrice: priceRange[0],
@@ -216,6 +216,9 @@ function VizCard({
             polyExpiryCurve={polyExpiryCurve}
             bybitNowCurve={bybitNowCurve}
             bybitExpiryCurve={bybitExpiryCurve}
+            polyAtBybitExpiryCurve={polyAtBybitExpiryCurve}
+            polyEntryCost={polyEntryCost}
+            bybitEntryCost={bybitEntryCost}
             currentCryptoPrice={spotPrice}
             cryptoSymbol={cryptoSymbol}
             totalEntryCost={totalEntryCost}
