@@ -149,6 +149,8 @@ A `ResizeObserver` tracks the chart container width and targets ~11 major labele
 | Fee-inclusive entry cost (% denominator) | ✗ | ✓ |
 | Gross cost + initial margin for short options | ✗ | ✓ |
 | MM Required in chart tooltip | ✗ | ✓ |
+| Gross cost display (no redundant IM suffix) | ✗ | ✓ (v5.3.0) |
+| Long Option: clean cost display (no fee%) | ✗ | ✓ (v5.3.0) |
 
 ## Architecture
 
