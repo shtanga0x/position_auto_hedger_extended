@@ -24,7 +24,7 @@ export function SetupScreen({
   const canContinue = polyEvent !== null && bybitChain !== null;
 
   return (
-    <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', p: 2, gap: 2.5, position: 'relative' }}>
+    <Box sx={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', p: 2, gap: 2.5, position: 'relative' }}>
       {/* Background decorations */}
       <Box sx={{ position: 'absolute', top: '-20%', left: '-10%', width: '60%', height: '60%', background: 'radial-gradient(ellipse at center, rgba(0, 209, 255, 0.08) 0%, transparent 70%)', pointerEvents: 'none' }} />
       <Box sx={{ position: 'absolute', bottom: '-20%', right: '-10%', width: '50%', height: '50%', background: 'radial-gradient(ellipse at center, rgba(255, 107, 53, 0.06) 0%, transparent 70%)', pointerEvents: 'none' }} />
