@@ -94,7 +94,7 @@ export function PolymarketPanel({ onEventLoaded }: PolymarketPanelProps) {
           disabled={!isValidUrl || loading}
           onClick={handleSubmit}
           sx={{
-            minWidth: 140,
+            minWidth: 120, height: 40,
             background: isValidUrl ? 'linear-gradient(135deg, #00D1FF 0%, #00A3CC 100%)' : undefined,
           }}
         >
