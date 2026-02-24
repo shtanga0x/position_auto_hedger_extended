@@ -161,9 +161,6 @@ function VizCard({
     spotPrice,
   });
 
-  const evalDays = (match.tauEval * 365.25).toFixed(1);
-  const netSpread = (shortBid - bybitAsk) * bybitQty - bybitFee - shortFee;
-
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
       {/* Position summary */}
@@ -192,7 +189,7 @@ function VizCard({
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {shortInstrument.symbol} — sell ×{bybitQty} @ ${shortBid.toFixed(2)}{' '}
-              (${(shortBid * bybitQty).toFixed(2)}, fee: ${shortFee.toFixed(2)}, IM: ${(Math.max(shortBid, 0.1 * spotPrice) * bybitQty).toFixed(2)})
+              (${(shortBid * bybitQty).toFixed(2)}, fee: ${shortFee.toFixed(2)}) [IM: ${(Math.max(shortBid, 0.1 * spotPrice) * bybitQty).toFixed(2)}]
             </Typography>
           </Box>
         </Box>
@@ -205,9 +202,6 @@ function VizCard({
               Gross cost: ${grossCost.toFixed(2)} (IM: ${totalInitialMargin.toFixed(2)})
             </Typography>
           )}
-          <Typography variant="body2" color="text.secondary">
-            Spread net: {netSpread >= 0 ? '+' : ''}${netSpread.toFixed(2)} | Eval in {evalDays}d
-          </Typography>
           <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600 }}>
             Avg P&amp;L ±1%: +${match.avgPnl1.toFixed(2)} &nbsp;|&nbsp; ±10%: +${match.avgPnl10.toFixed(2)} &nbsp;|&nbsp; ±20%: +${match.avgPnl20.toFixed(2)}
           </Typography>
