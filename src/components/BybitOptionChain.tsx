@@ -18,7 +18,6 @@ interface BybitOptionChainProps {
 export function BybitOptionChain({ onChainSelected, onSpotPriceLoaded }: BybitOptionChainProps) {
   const [chains, setChains] = useState<BybitChainType[]>([]);
   const [selectedExpiry, setSelectedExpiry] = useState<number | ''>('');
-  const [spotPrice, setSpotPrice] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,7 +35,6 @@ export function BybitOptionChain({ onChainSelected, onSpotPriceLoaded }: BybitOp
         if (cancelled) return;
         const grouped = groupByExpiry(instruments, tickers);
         setChains(grouped);
-        setSpotPrice(spot);
         onSpotPriceLoaded(spot);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to fetch Bybit data');
@@ -84,12 +82,6 @@ export function BybitOptionChain({ onChainSelected, onSpotPriceLoaded }: BybitOp
       <Typography variant="h6" sx={{ fontWeight: 600 }}>Bybit BTC Options</Typography>
 
       {error && <Alert severity="error">{error}</Alert>}
-
-      {spotPrice > 0 && (
-        <Typography variant="body2" color="text.secondary">
-          BTC Spot: ${spotPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-        </Typography>
-      )}
 
       {/* Expiry selector */}
       <Select

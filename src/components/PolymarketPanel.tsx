@@ -37,7 +37,6 @@ export function PolymarketPanel({ onEventLoaded }: PolymarketPanelProps) {
   const [event, setEvent] = useState<PolymarketEvent | null>(null);
   const [crypto, setCrypto] = useState<CryptoOption | null>(null);
   const [optionType, setOptionType] = useState<OptionType>('above');
-  const [spotPrice, setSpotPrice] = useState<number | null>(null);
 
   const isValidUrl = isValidPolymarketUrl(url);
 
@@ -63,7 +62,6 @@ export function PolymarketPanel({ onEventLoaded }: PolymarketPanelProps) {
       setEvent(eventData);
       setCrypto(detectedCrypto);
       setOptionType(detectedType);
-      setSpotPrice(spot);
       onEventLoaded(eventData, parsed, detectedCrypto, detectedType, spot);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch event data.');
@@ -94,7 +92,7 @@ export function PolymarketPanel({ onEventLoaded }: PolymarketPanelProps) {
           disabled={!isValidUrl || loading}
           onClick={handleSubmit}
           sx={{
-            minWidth: 120, height: 40,
+            minWidth: 120, height: 40, whiteSpace: 'nowrap',
             background: isValidUrl ? 'linear-gradient(135deg, #00D1FF 0%, #00A3CC 100%)' : undefined,
           }}
         >
@@ -113,9 +111,6 @@ export function PolymarketPanel({ onEventLoaded }: PolymarketPanelProps) {
           <Chip label={optionType === 'above' ? 'European Binary' : 'One-Touch Barrier'} size="small" sx={{ bgcolor: 'rgba(0, 209, 255, 0.1)', color: '#00D1FF', border: '1px solid rgba(0, 209, 255, 0.3)' }} />
           {expiryDate && (
             <Chip label={`Exp: ${expiryDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`} size="small" sx={{ bgcolor: 'rgba(139, 157, 195, 0.1)', color: '#8B9DC3', border: '1px solid rgba(139, 157, 195, 0.2)' }} />
-          )}
-          {spotPrice && (
-            <Chip label={`${crypto} Spot: $${spotPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} size="small" sx={{ bgcolor: 'rgba(34, 197, 94, 0.1)', color: '#22C55E', border: '1px solid rgba(34, 197, 94, 0.3)' }} />
           )}
         </Box>
       )}
