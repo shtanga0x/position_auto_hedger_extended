@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useTheme } from '@mui/material/styles';
 import {
   LineChart,
@@ -32,6 +32,7 @@ interface ProjectionChartProps {
   // Bybit overlay (orange)
   bybitNowCurve?: ProjectionPoint[];
   bybitExpiryCurve?: ProjectionPoint[];
+  bybitMMNowCurve?: ProjectionPoint[]; // maintenance margin for short positions
   currentCryptoPrice: number;
   cryptoSymbol: string;
   totalEntryCost?: number;
@@ -48,13 +49,21 @@ interface ChartDataRow {
 const CHART_MARGIN = { top: 20, right: 60, bottom: 50, left: 20 };
 const ACTIVE_DOT = { r: 4 };
 
-function getTickIntervals(range: number): { major: number; minor: number } {
-  if (range > 100000) return { major: 10000, minor: 1000 };
-  if (range > 50000) return { major: 5000, minor: 1000 };
-  if (range > 10000) return { major: 2000, minor: 500 };
-  if (range > 5000) return { major: 1000, minor: 100 };
-  if (range > 1000) return { major: 500, minor: 100 };
-  return { major: 100, minor: 10 };
+/** Adaptive tick intervals: ~11 labeled major ticks at 1100px chart width, scales with actual width. */
+function getAdaptiveTickIntervals(range: number, chartWidth: number): { major: number; minor: number } {
+  const TARGET_TICKS_1100 = 11;
+  const targetTicks = Math.max(4, Math.round(TARGET_TICKS_1100 * chartWidth / 1100));
+  if (range <= 0) return { major: 1000, minor: 200 };
+  const rawMajor = range / targetTicks;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawMajor)));
+  let bestMajor = magnitude;
+  let bestDiff = Infinity;
+  for (const n of [1, 2, 5, 10]) {
+    const candidate = n * magnitude;
+    const diff = Math.abs(range / candidate - targetTicks);
+    if (diff < bestDiff) { bestDiff = diff; bestMajor = candidate; }
+  }
+  return { major: bestMajor, minor: bestMajor / 5 };
 }
 
 function formatPct(value: number): string {
@@ -147,6 +156,7 @@ function CustomTooltipContent({
   totalEntryCost,
   polyEntryCost,
   bybitEntryCost,
+  hasMMCurve,
 }: {
   active?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -166,6 +176,7 @@ function CustomTooltipContent({
   totalEntryCost?: number;
   polyEntryCost?: number;
   bybitEntryCost?: number;
+  hasMMCurve?: boolean;
 }) {
   if (!active || !payload || payload.length === 0) return null;
 
@@ -258,6 +269,12 @@ function CustomTooltipContent({
             renderRow(BYBIT_NOW, valueMap.get(BYBIT_NOW)!, BYBIT_ORANGE, lineStyles.get(BYBIT_NOW), undefined, bybitPct(valueMap.get(BYBIT_NOW)!))}
           {!hiddenLines.has(BYBIT_EXPIRY) && valueMap.has(BYBIT_EXPIRY) &&
             renderRow(BYBIT_EXPIRY, valueMap.get(BYBIT_EXPIRY)!, BYBIT_ORANGE, lineStyles.get(BYBIT_EXPIRY), undefined, bybitPct(valueMap.get(BYBIT_EXPIRY)!))}
+          {hasMMCurve && valueMap.has('__bybit_mm') && (valueMap.get('__bybit_mm')! > 0) && (
+            <div style={{ display: 'flex', alignItems: 'center', fontSize: 13, padding: '2px 0', color: '#F59E0B' }}>
+              <span style={{ marginRight: 6, opacity: 0.7 }}>▲</span>
+              <span>MM Required: ${valueMap.get('__bybit_mm')!.toFixed(2)}</span>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -271,6 +288,7 @@ export function ProjectionChart({
   polyExpiryCurve,
   bybitNowCurve,
   bybitExpiryCurve,
+  bybitMMNowCurve,
   polyAtBybitExpiryCurve,
   polyEntryCost,
   bybitEntryCost,
@@ -290,10 +308,21 @@ export function ProjectionChart({
   const legendColor = isDark ? '#8B9DC3' : '#5A6A85';
 
   const [hiddenLines, setHiddenLines] = useState<Set<string>>(new Set());
+  const [chartWidth, setChartWidth] = useState(1100);
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => setChartWidth(entries[0].contentRect.width));
+    ro.observe(el);
+    setChartWidth(el.clientWidth || 1100);
+    return () => ro.disconnect();
+  }, []);
 
   const hasPolyOverlay = (polyNowCurve && polyNowCurve.length > 0) || false;
   const hasBybitOverlay = (bybitNowCurve && bybitNowCurve.length > 0) || false;
   const hasPolyAtBybitExpiry = (polyAtBybitExpiryCurve && polyAtBybitExpiryCurve.length > 0) || false;
+  const hasMMCurve = (bybitMMNowCurve && bybitMMNowCurve.length > 0) || false;
 
   const chartData = useMemo(() => {
     if (combinedCurves.length === 0 || combinedCurves[0].length === 0) return [];
@@ -321,6 +350,7 @@ export function ProjectionChart({
       // Bybit overlay
       if (bybitNowCurve?.[i]) row[BYBIT_NOW] = bybitNowCurve[i].pnl;
       if (bybitExpiryCurve?.[i]) row[BYBIT_EXPIRY] = bybitExpiryCurve[i].pnl;
+      if (hasMMCurve && bybitMMNowCurve?.[i]) row['__bybit_mm'] = bybitMMNowCurve[i].pnl;
 
       return row;
     });
@@ -341,7 +371,7 @@ export function ProjectionChart({
     }
 
     return data;
-  }, [combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, polyAtBybitExpiryCurve, bybitNowCurve, bybitExpiryCurve, hasPolyAtBybitExpiry]);
+  }, [combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, polyAtBybitExpiryCurve, bybitNowCurve, bybitExpiryCurve, bybitMMNowCurve, hasPolyAtBybitExpiry, hasMMCurve]);
 
   // Collect all visible pnl values for Y domain
   const { yDomain, yTicks } = useMemo(() => {
@@ -393,13 +423,13 @@ export function ProjectionChart({
     const min = chartData[0].cryptoPrice;
     const max = chartData[chartData.length - 1].cryptoPrice;
     const range = max - min;
-    const { major, minor } = getTickIntervals(range);
+    const { major, minor } = getAdaptiveTickIntervals(range, chartWidth);
 
     const ticks: number[] = [];
     const start = Math.ceil(min / minor) * minor;
-    for (let v = start; v <= max; v += minor) ticks.push(v);
+    for (let v = start; v <= max; v += minor) ticks.push(Math.round(v));
     return { allTicks: ticks, majorInterval: major, minorInterval: minor, xDomain: [min, max] };
-  }, [chartData]);
+  }, [chartData, chartWidth]);
 
   const formatYAxisPnl = useCallback((v: number) => v.toFixed(2), []);
 
@@ -492,9 +522,10 @@ export function ProjectionChart({
         totalEntryCost={totalEntryCost}
         polyEntryCost={polyEntryCost}
         bybitEntryCost={bybitEntryCost}
+        hasMMCurve={hasMMCurve}
       />
     ),
-    [combinedLabels, cryptoSymbol, hiddenLines, currentCryptoPrice, tooltipBg, tooltipBorder, axisColor, hasPolyOverlay, hasPolyAtBybitExpiry, hasBybitOverlay, lineStyles, totalEntryCost, polyEntryCost, bybitEntryCost]
+    [combinedLabels, cryptoSymbol, hiddenLines, currentCryptoPrice, tooltipBg, tooltipBorder, axisColor, hasPolyOverlay, hasPolyAtBybitExpiry, hasBybitOverlay, lineStyles, totalEntryCost, polyEntryCost, bybitEntryCost, hasMMCurve]
   );
 
   if (chartData.length === 0) return null;
@@ -522,7 +553,7 @@ export function ProjectionChart({
   }
 
   return (
-    <div>
+    <div ref={containerRef}>
       <ResponsiveContainer width="100%" minHeight={600}>
         <LineChart data={chartData} margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
@@ -578,6 +609,20 @@ export function ProjectionChart({
             legendType="none"
             tooltipType="none"
           />
+          {/* Invisible line for MM data — included in payload for tooltip */}
+          {hasMMCurve && (
+            <Line
+              yAxisId="left"
+              type="linear"
+              dataKey="__bybit_mm"
+              name="__bybit_mm"
+              stroke="none"
+              strokeWidth={0}
+              dot={false}
+              activeDot={false}
+              legendType="none"
+            />
+          )}
 
           {/* Combined curves: green/red split */}
           {combinedLabels.map((label, i) => [

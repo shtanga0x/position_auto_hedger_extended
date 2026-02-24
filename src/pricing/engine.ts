@@ -314,6 +314,16 @@ export function bybitTradingFee(indexPrice: number, optionPrice: number, quantit
   return Math.min(0.0003 * indexPrice, 0.07 * optionPrice) * quantity;
 }
 
+/** Bybit initial margin for SHORT option: max(markPrice, 10% × indexPrice) × qty */
+export function bybitInitialMargin(indexPrice: number, markPrice: number, quantity: number): number {
+  return Math.max(markPrice, 0.1 * indexPrice) * quantity;
+}
+
+/** Bybit maintenance margin for SHORT option: max(markPrice, 7.5% × indexPrice) × qty */
+export function bybitMaintenanceMargin(indexPrice: number, markPrice: number, quantity: number): number {
+  return Math.max(markPrice, 0.075 * indexPrice) * quantity;
+}
+
 // --- Black-Scholes vanilla option pricing ---
 
 /**

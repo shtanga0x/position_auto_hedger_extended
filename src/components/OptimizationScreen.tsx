@@ -146,7 +146,7 @@ function VizCard({
   const nowTs = useMemo(() => Math.floor(Date.now() / 1000), []);
   const polyTauNow = Math.max((polyExpiryTs - nowTs) / (365.25 * 24 * 3600), 0);
 
-  const { combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve, polyAtBybitExpiryCurve, polyEntryCost, bybitEntryCost, totalEntryCost } = usePortfolioCurves({
+  const { combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve, polyAtBybitExpiryCurve, polyEntryCost, bybitEntryCost, totalEntryCost, grossCost, totalInitialMargin, bybitMMNowCurve } = usePortfolioCurves({
     polyPositions: [polyPos],
     bybitPositions: [longBybitPos, shortBybitPos],
     lowerPrice: priceRange[0],
@@ -158,6 +158,7 @@ function VizCard({
     smile: smile.length > 0 ? smile : undefined,
     bybitSmile: bybitSmile.length > 0 ? bybitSmile : undefined,
     numPoints: 500,
+    spotPrice,
   });
 
   const evalDays = (match.tauEval * 365.25).toFixed(1);
@@ -181,7 +182,8 @@ function VizCard({
               Long Option
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {instrument.symbol} — buy ×{bybitQty} @ ${bybitAsk.toFixed(2)} (${(bybitAsk * bybitQty).toFixed(2)}, fee: ${bybitFee.toFixed(2)})
+              {instrument.symbol} — buy ×{bybitQty} @ ${bybitAsk.toFixed(2)}{' '}
+              (total: ${(bybitAsk * bybitQty + bybitFee).toFixed(2)}, fee: ${bybitFee.toFixed(2)} / {(bybitAsk * bybitQty + bybitFee) > 0 ? ((bybitFee / (bybitAsk * bybitQty + bybitFee)) * 100).toFixed(1) : '0.0'}%)
             </Typography>
           </Box>
           <Box>
@@ -189,7 +191,8 @@ function VizCard({
               Short Option
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {shortInstrument.symbol} — sell ×{bybitQty} @ ${shortBid.toFixed(2)} (${(shortBid * bybitQty).toFixed(2)}, fee: ${shortFee.toFixed(2)})
+              {shortInstrument.symbol} — sell ×{bybitQty} @ ${shortBid.toFixed(2)}{' '}
+              (${(shortBid * bybitQty).toFixed(2)}, fee: ${shortFee.toFixed(2)}, IM: ${(Math.max(shortBid, 0.1 * spotPrice) * bybitQty).toFixed(2)})
             </Typography>
           </Box>
         </Box>
@@ -197,6 +200,11 @@ function VizCard({
           <Typography variant="body2" sx={{ color: '#00D1FF', fontWeight: 600 }}>
             Net entry cost: ${totalEntryCost.toFixed(2)}
           </Typography>
+          {totalInitialMargin > 0 && (
+            <Typography variant="body2" sx={{ color: '#F59E0B', fontWeight: 600 }}>
+              Gross cost: ${grossCost.toFixed(2)} (IM: ${totalInitialMargin.toFixed(2)})
+            </Typography>
+          )}
           <Typography variant="body2" color="text.secondary">
             Spread net: {netSpread >= 0 ? '+' : ''}${netSpread.toFixed(2)} | Eval in {evalDays}d
           </Typography>
@@ -216,6 +224,7 @@ function VizCard({
             polyExpiryCurve={polyExpiryCurve}
             bybitNowCurve={bybitNowCurve}
             bybitExpiryCurve={bybitExpiryCurve}
+            bybitMMNowCurve={bybitMMNowCurve.length > 0 ? bybitMMNowCurve : undefined}
             polyAtBybitExpiryCurve={polyAtBybitExpiryCurve}
             polyEntryCost={polyEntryCost}
             bybitEntryCost={bybitEntryCost}

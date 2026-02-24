@@ -7,6 +7,8 @@ import {
   priceOptionYes,
   interpolateSmile,
   autoH,
+  bybitInitialMargin,
+  bybitMaintenanceMargin,
   type SmilePoint,
 } from '../pricing/engine';
 
@@ -22,6 +24,7 @@ interface PortfolioCurvesInput {
   smile?: SmilePoint[];
   bybitSmile?: SmilePoint[]; // IV smile from Bybit option chain (sticky-moneyness)
   numPoints?: number; // default 500
+  spotPrice?: number; // current index price, used for initial margin calculation
 }
 
 interface PortfolioCurvesOutput {
@@ -34,8 +37,11 @@ interface PortfolioCurvesOutput {
   polyAtBybitExpiryCurve: ProjectionPoint[];
   polyEntryCost: number;
   bybitEntryCost: number;
-  totalEntryCost: number;
+  totalEntryCost: number;  // gross: all premiums + fees (unsigned)
   totalFees: number;
+  grossCost: number;           // totalEntryCost + initial margin for all short positions
+  totalInitialMargin: number;  // sum of IM for all short Bybit positions (at entry)
+  bybitMMNowCurve: ProjectionPoint[]; // maintenance margin curve for short positions (NOW)
 }
 
 const YEAR_SEC = 365.25 * 24 * 3600;
@@ -172,6 +178,7 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     smile,
     bybitSmile,
     numPoints = 2000,
+    spotPrice = 0,
   } = input;
 
   return useMemo(() => {
@@ -187,6 +194,9 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       bybitEntryCost: 0,
       totalEntryCost: 0,
       totalFees: 0,
+      grossCost: 0,
+      totalInitialMargin: 0,
+      bybitMMNowCurve: [],
     };
 
     if (lowerPrice <= 0 || upperPrice <= lowerPrice) return empty;
@@ -252,7 +262,9 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       ? computePolyOnlyCurve(polyPositions, grid, polyTauAtBybitExpiry, optionType, autoH(polyTauAtBybitExpiry, deltaH), smile)
       : [];
 
-    // Total entry cost and fees
+    // Total entry cost (gross, unsigned) and fees
+    // totalEntryCost = sum of all premiums + fees, regardless of buy/sell
+    // This is the correct denominator for P&L % (at NOW: P&L ≈ -fees, at expiry loss: P&L = -(premium+fee) = -100%)
     let totalEntryCost = 0;
     let totalFees = 0;
     let polyEntryCost = 0;
@@ -262,11 +274,42 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       polyEntryCost += p.entryPrice * p.quantity;
     }
     for (const b of bybitPositions) {
-      totalEntryCost += b.entryPrice * b.quantity; // always positive: premium is margin cost for sell too
+      const premium = b.entryPrice * b.quantity;
+      totalEntryCost += premium + b.entryFee; // gross: always add, include fee
       const mult = b.side === 'buy' ? 1 : -1;
-      bybitEntryCost += b.entryPrice * mult * b.quantity;
+      bybitEntryCost += (premium + b.entryFee) * mult; // signed with fee for overlay % calc
       totalFees += b.entryFee;
     }
+
+    // Initial margin for short positions (at entry-time spot price)
+    let totalInitialMargin = 0;
+    if (spotPrice > 0) {
+      for (const b of bybitPositions) {
+        if (b.side === 'sell') {
+          totalInitialMargin += bybitInitialMargin(spotPrice, b.entryPrice, b.quantity);
+        }
+      }
+    }
+    const grossCost = totalEntryCost + totalInitialMargin;
+
+    // Maintenance margin curve for short positions at current tau (NOW)
+    const bybitMMNowCurve: ProjectionPoint[] = bybitPositions.some(b => b.side === 'sell')
+      ? grid.map(cryptoPrice => {
+          let mm = 0;
+          for (const pos of bybitPositions) {
+            if (pos.side === 'sell') {
+              const tau = bybitTausNow.get(pos.symbol) ?? 0;
+              const rawIv = bybitSmile && bybitSmile.length > 0
+                ? interpolateSmile(bybitSmile, Math.log(cryptoPrice / pos.strike))
+                : pos.markIv;
+              const iv = Math.max(rawIv, 0.001);
+              const markPrice = bsPrice(cryptoPrice, pos.strike, iv, tau, pos.optionsType);
+              mm += bybitMaintenanceMargin(cryptoPrice, markPrice, pos.quantity);
+            }
+          }
+          return { cryptoPrice, pnl: mm };
+        })
+      : [];
 
     return {
       combinedCurves,
@@ -280,6 +323,9 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       bybitEntryCost,
       totalEntryCost,
       totalFees,
+      grossCost,
+      totalInitialMargin,
+      bybitMMNowCurve,
     };
-  }, [polyPositions, bybitPositions, lowerPrice, upperPrice, polyTauNow, polyExpiryTs, optionType, deltaH, smile, bybitSmile, numPoints]);
+  }, [polyPositions, bybitPositions, lowerPrice, upperPrice, polyTauNow, polyExpiryTs, optionType, deltaH, smile, bybitSmile, numPoints, spotPrice]);
 }
