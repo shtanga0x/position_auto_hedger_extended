@@ -1,4 +1,4 @@
-# Grapher V5 — Polymarket + Bybit 3-Leg Spread Optimizer
+# position_auto_hedger — Polymarket + Bybit 3-Leg Spread Optimizer
 
 **Live:** [shtanga0x.github.io/position_auto_hedger](https://shtanga0x.github.io/position_auto_hedger/)
 
@@ -98,7 +98,36 @@ Click the **chart icon** in any cell to render the combined 3-leg P&L chart:
 - **Green/red split**: positive P&L in green, negative in red
 - **Dual Y-axes**: left = P&L ($), right = P&L (%)
 
-### 6. Pricing Engine
+### 6. Cost Breakdown & Margin
+
+**Entry cost formula:**
+```
+Total entry cost = Σ (premium × qty) + Σ fees    (unsigned across buy and sell legs)
+```
+Fees are included in the denominator so tooltip percentages are consistent: a full loss at expiry always shows −100%.
+
+**Position display in the visualization card:**
+- Long Bybit leg: `{symbol} — buy ×{qty} @ ${price} (total: ${total}, fee: ${fee} / {fee%}%)`
+- Short Bybit leg: `{symbol} — sell ×{qty} @ ${price} (total: ${total}, fee: ${fee} / {fee%}%) [IM: ${im}]`
+
+**Bybit margin formulas (linear options):**
+```
+Initial Margin (IM)  = max(markPrice, 0.10 × indexPrice) × qty
+Maintenance Margin (MM) = max(markPrice, 0.075 × indexPrice) × qty
+```
+
+**Gross cost** is shown in the stats row when the short leg is present:
+```
+Gross cost: $XX.XX  (IM: $XX.XX)
+```
+
+**MM Required in tooltip**: hovering the chart with a short Bybit leg active shows an amber `▲ MM Required: $XX.XX` line reflecting total maintenance margin at that spot price.
+
+### 7. Adaptive X-Axis Ticks
+
+A `ResizeObserver` tracks the chart container width and targets ~11 major labeled ticks at 1100 px, scaling proportionally for other widths. Intervals are rounded to nice numbers (1, 2, 5, 10 × nearest power of 10).
+
+### 8. Pricing Engine
 
 - **Polymarket `hit` type**: one-touch barrier formula with auto-H time scaling
 - **Bybit options**: standard Black-Scholes (`bsCallPrice` / `bsPutPrice`)
@@ -116,6 +145,10 @@ Click the **chart icon** in any cell to render the combined 3-leg P&L chart:
 | Missing rows | Hidden | Shown as `—` |
 | Expiry display | Date only | Date + time in UTC+1 |
 | Snapshot export | ✗ | ✓ (JPG via html2canvas) |
+| Adaptive X-axis ticks | ✗ | ✓ |
+| Fee-inclusive entry cost (% denominator) | ✗ | ✓ |
+| Gross cost + initial margin for short options | ✗ | ✓ |
+| MM Required in chart tooltip | ✗ | ✓ |
 
 ## Architecture
 
