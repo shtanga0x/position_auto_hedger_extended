@@ -180,7 +180,7 @@ function VizCard({
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {instrument.symbol} — buy ×{bybitQty} @ ${bybitAsk.toFixed(2)}{' '}
-              (total: ${(bybitAsk * bybitQty + bybitFee).toFixed(2)}, fee: ${bybitFee.toFixed(2)} / {(bybitAsk * bybitQty + bybitFee) > 0 ? ((bybitFee / (bybitAsk * bybitQty + bybitFee)) * 100).toFixed(1) : '0.0'}%)
+              (total: ${(bybitAsk * bybitQty + bybitFee).toFixed(2)}, fee: ${bybitFee.toFixed(2)})
             </Typography>
           </Box>
           <Box>
@@ -199,7 +199,7 @@ function VizCard({
           </Typography>
           {totalInitialMargin > 0 && (
             <Typography variant="body2" sx={{ color: '#F59E0B', fontWeight: 600 }}>
-              Gross cost: ${grossCost.toFixed(2)} (IM: ${totalInitialMargin.toFixed(2)})
+              Gross cost: ${grossCost.toFixed(2)}
             </Typography>
           )}
           <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600 }}>
