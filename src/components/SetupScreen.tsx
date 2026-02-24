@@ -44,7 +44,7 @@ export function SetupScreen({
           background: 'linear-gradient(90deg, #E8EDF5 0%, #00D1FF 100%)',
           backgroundClip: 'text', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
         }}>
-          position_auto_hedger
+          Position Auto-Hedger
         </Typography>
         <Typography variant="caption" color="text.secondary">
           Auto-find the best 2-leg Bybit spread hedge for each Polymarket strike

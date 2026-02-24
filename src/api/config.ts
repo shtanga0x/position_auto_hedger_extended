@@ -19,10 +19,4 @@ export const API_CONFIG = {
   BINANCE_API_BASE: isDev ? '/api/binance' : `${WORKER_URL}/api/binance`,
 };
 
-// Для отладки
-if (isDev) {
-  console.log('[API Config] Development mode - using Vite proxy');
-} else {
-  console.log('[API Config] Production mode - using Worker URL:', WORKER_URL || '(not set)');
-}
 

@@ -23,6 +23,10 @@ function setCache<T>(key: string, data: T): void {
   cache.set(key, { data, timestamp: Date.now() });
 }
 
+export function clearBybitCache(): void {
+  cache.clear();
+}
+
 /** Parse Bybit symbol like "BTC-28FEB25-100000-C" or "BTC-27MAR26-86000-P-USDT" */
 export function parseBybitSymbol(symbol: string): {
   base: string;

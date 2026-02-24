@@ -8,7 +8,7 @@ A browser-based optimization tool that finds the best **3-leg spread** to hedge 
 2. **Long Bybit option** — buy a CALL (up-barrier) or PUT (down-barrier) at any strike
 3. **Short Bybit option** — sell a CALL/PUT at (or nearest to) the Polymarket strike, converting the unlimited option into a spread
 
-The optimizer sizes the Poly NO position so the net position breaks even at the strike, then ranks all feasible 3-leg combinations by average P&L in ±5%, ±10%, ±20% ranges around the current spot price.
+The optimizer sizes the Poly NO position so the net position breaks even at the strike, then ranks all feasible 3-leg combinations by average P&L in ±1%, ±5%, ±20% ranges around the current spot price.
 
 ## How It Works
 
@@ -88,9 +88,22 @@ Header chips show Polymarket and Bybit expiry times in **UTC+1** (e.g. `Poly exp
 
 ### 4. Snapshot Export
 
-A **camera button** (green, top-right) appears when a visualization is active. Clicking it saves `PolyOption_YYYY-MM-DD.jpg` — a 2× resolution screenshot of the selected 3-leg position card (long leg, short leg, Poly leg details + P&L chart) via `html2canvas`.
+A **camera button** (green, top-right) appears when a visualization is active. Clicking it saves a 2× resolution screenshot of the selected 3-leg position card (long leg, short leg, Poly leg details + P&L chart) via `html2canvas`.
 
-### 5. P&L Visualization
+Filename format: `PolyAH_K{strike}_exp{expiry}_{YYYY-MM-DD_HH-MM}.jpg`
+Example: `PolyAH_K95000_exp28Feb_2026-02-25_14-30.jpg`
+
+### 5. Refresh Prices
+
+A **↻ refresh button** (green, top-right) appears once a Polymarket event or Bybit chain is loaded. Clicking it re-fetches all live market data without changing the selected positions or sizes:
+
+- **Spot price** — re-fetched from Binance
+- **Polymarket prices** — re-fetched via the Cloudflare Worker proxy (fresh YES bid/ask per strike)
+- **Bybit tickers** — cache cleared and re-fetched (fresh mark price, bid/ask, markIv per instrument)
+
+After the refresh the optimizer reruns automatically and the table updates with the latest data. The button spins while the fetch is in progress.
+
+### 6. P&L Visualization
 
 Click the **chart icon** in any cell to render the combined 3-leg P&L chart:
 - **Combined curves**: time snapshots (Now, ½ to earlier expiry, at earlier expiry, at later expiry)
@@ -98,7 +111,7 @@ Click the **chart icon** in any cell to render the combined 3-leg P&L chart:
 - **Green/red split**: positive P&L in green, negative in red
 - **Dual Y-axes**: left = P&L ($), right = P&L (%)
 
-### 6. Cost Breakdown & Margin
+### 7. Cost Breakdown & Margin
 
 **Entry cost formula:**
 ```
@@ -123,11 +136,11 @@ Gross cost: $XX.XX  (IM: $XX.XX)
 
 **MM Required in tooltip**: hovering the chart with a short Bybit leg active shows an amber `▲ MM Required: $XX.XX` line reflecting total maintenance margin at that spot price.
 
-### 7. Adaptive X-Axis Ticks
+### 8. Adaptive X-Axis Ticks
 
 A `ResizeObserver` tracks the chart container width and targets ~11 major labeled ticks at 1100 px, scaling proportionally for other widths. Intervals are rounded to nice numbers (1, 2, 5, 10 × nearest power of 10).
 
-### 8. Pricing Engine
+### 9. Pricing Engine
 
 - **Polymarket `hit` type**: one-touch barrier formula with auto-H time scaling
 - **Bybit options**: standard Black-Scholes (`bsCallPrice` / `bsPutPrice`)
@@ -151,6 +164,8 @@ A `ResizeObserver` tracks the chart container width and targets ~11 major labele
 | MM Required in chart tooltip | ✗ | ✓ |
 | Gross cost display (no redundant IM suffix) | ✗ | ✓ (v5.3.0) |
 | Long Option: clean cost display (no fee%) | ✗ | ✓ (v5.3.0) |
+| Snapshot filename with strike + expiry + datetime | ✗ | ✓ (v5.3.1) |
+| Refresh prices button (↻) | ✗ | ✓ (v5.3.1) |
 
 ## Architecture
 

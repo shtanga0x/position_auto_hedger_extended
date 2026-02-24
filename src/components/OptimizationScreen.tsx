@@ -327,12 +327,18 @@ export function OptimizationScreen({
       useCORS: true,
       logging: false,
     });
-    const today = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const datetime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
+    const strike = vizSelection?.strikeResult.market.strikePrice ?? 'noK';
+    const expTs = polyEvent?.endDate ?? 0;
+    const expiryPart = expTs > 0
+      ? new Date(expTs * 1000).toLocaleDateString('en-US', { day: 'numeric', month: 'short' }).replace(' ', '')
+      : 'noexp';
     const link = document.createElement('a');
-    link.download = `PolyOption_${today}.jpg`;
+    link.download = `PolyAH_K${strike}_exp${expiryPart}_${datetime}.jpg`;
     link.href = canvas.toDataURL('image/jpeg', 0.95);
     link.click();
-  }, [isDark]);
+  }, [isDark, vizSelection, polyEvent]);
 
   const bybitQty = useMemo(() => {
     const v = parseFloat(bybitQtyInput);
@@ -639,7 +645,7 @@ export function OptimizationScreen({
           onClick={handleTransferToHedger}
           title="Open in position_hedger"
           sx={{
-            position: 'fixed', top: 16, right: 112, zIndex: 1300,
+            position: 'fixed', top: 16, right: 160, zIndex: 1300,
             bgcolor: isDark ? 'rgba(74, 144, 217, 0.12)' : 'rgba(74, 144, 217, 0.1)',
             color: '#4A90D9',
             '&:hover': { bgcolor: isDark ? 'rgba(74, 144, 217, 0.22)' : 'rgba(74, 144, 217, 0.2)' },
@@ -655,7 +661,7 @@ export function OptimizationScreen({
           onClick={handleSnapshot}
           title="Save snapshot as JPG"
           sx={{
-            position: 'fixed', top: 16, right: 64, zIndex: 1300,
+            position: 'fixed', top: 16, right: 112, zIndex: 1300,
             bgcolor: isDark ? 'rgba(34, 197, 94, 0.12)' : 'rgba(34, 197, 94, 0.1)',
             color: '#22C55E',
             '&:hover': { bgcolor: isDark ? 'rgba(34, 197, 94, 0.22)' : 'rgba(34, 197, 94, 0.2)' },

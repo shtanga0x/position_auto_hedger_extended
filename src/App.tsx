@@ -1,16 +1,20 @@
 import { useState, useCallback } from 'react';
 import { ThemeProvider, CssBaseline, Box, IconButton } from '@mui/material';
-import { DarkMode, LightMode } from '@mui/icons-material';
+import { DarkMode, LightMode, Refresh } from '@mui/icons-material';
 import { darkTheme, lightTheme } from './theme';
 import { SetupScreen } from './components/SetupScreen';
 import { OptimizationScreen } from './components/OptimizationScreen';
 import type { CryptoOption, OptionType, ParsedMarket, PolymarketEvent, BybitOptionChain as BybitChainType } from './types';
+import { fetchCurrentPrice } from './api/binance';
+import { fetchEventBySlug, parseMarkets } from './api/polymarket';
+import { fetchBybitTickers, clearBybitCache } from './api/bybit';
 
 type Screen = 'setup' | 'optimize';
 
 function App() {
   const [screen, setScreen] = useState<Screen>('setup');
   const [isDark, setIsDark] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Polymarket state
   const [polyEvent, setPolyEvent] = useState<PolymarketEvent | null>(null);
@@ -51,6 +55,32 @@ function App() {
     setScreen('setup');
   }, []);
 
+  const handleRefresh = useCallback(async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      if (crypto) {
+        const newSpot = await fetchCurrentPrice(crypto);
+        setSpotPrice(newSpot);
+      }
+      if (polyEvent) {
+        const freshEvent = await fetchEventBySlug(polyEvent.slug);
+        setPolyMarkets(parseMarkets(freshEvent.markets));
+      }
+      if (bybitChain) {
+        clearBybitCache();
+        const freshTickers = await fetchBybitTickers();
+        const chainSymbols = new Set(bybitChain.instruments.map(i => i.symbol));
+        const chainTickers = new Map([...freshTickers.entries()].filter(([sym]) => chainSymbols.has(sym)));
+        setBybitChain({ ...bybitChain, tickers: chainTickers });
+      }
+    } catch (err) {
+      console.error('Refresh failed:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, crypto, polyEvent, bybitChain]);
+
   return (
     <ThemeProvider theme={isDark ? darkTheme : lightTheme}>
       <CssBaseline />
@@ -67,6 +97,24 @@ function App() {
         >
           {isDark ? <LightMode /> : <DarkMode />}
         </IconButton>
+
+        {/* Refresh prices button */}
+        {(polyEvent !== null || bybitChain !== null) && (
+          <IconButton
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh prices & rerun optimization"
+            sx={{
+              position: 'fixed', top: 16, right: 64, zIndex: 1300,
+              bgcolor: isDark ? 'rgba(34, 197, 94, 0.1)' : 'rgba(34, 197, 94, 0.06)',
+              color: '#22C55E',
+              '&:hover': { bgcolor: isDark ? 'rgba(34, 197, 94, 0.2)' : 'rgba(34, 197, 94, 0.12)' },
+              '&.Mui-disabled': { color: 'rgba(34, 197, 94, 0.3)' },
+            }}
+          >
+            <Refresh sx={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none', '@keyframes spin': { '0%': { transform: 'rotate(0deg)' }, '100%': { transform: 'rotate(360deg)' } } }} />
+          </IconButton>
+        )}
 
         {screen === 'setup' && (
           <SetupScreen
