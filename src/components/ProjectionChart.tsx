@@ -330,8 +330,10 @@ export function ProjectionChart({
     const data = combinedCurves[0].map((point, i) => {
       const row: ChartDataRow = { cryptoPrice: point.cryptoPrice };
 
-      // Combined curves: split green/red
+      // Combined curves: split green/red — skip hidden curves so Recharts
+      // cannot use their extreme values to override the explicit yDomain.
       for (let c = 0; c < combinedCurves.length; c++) {
+        if (hiddenLines.has(combinedLabels[c])) continue;
         if (combinedCurves[c][i]) {
           const pnl = combinedCurves[c][i].pnl;
           if (pnl >= 0) {
@@ -342,22 +344,23 @@ export function ProjectionChart({
         }
       }
 
-      // Poly overlay (solid color, no split)
-      if (polyNowCurve?.[i]) row[POLY_NOW] = polyNowCurve[i].pnl;
-      if (polyExpiryCurve?.[i]) row[POLY_EXPIRY] = polyExpiryCurve[i].pnl;
-      if (hasPolyAtBybitExpiry && polyAtBybitExpiryCurve?.[i]) row[POLY_OPTION_EXPIRY] = polyAtBybitExpiryCurve[i].pnl;
+      // Poly overlay (solid color, no split) — skip if hidden
+      if (!hiddenLines.has(POLY_NOW) && polyNowCurve?.[i]) row[POLY_NOW] = polyNowCurve[i].pnl;
+      if (!hiddenLines.has(POLY_EXPIRY) && polyExpiryCurve?.[i]) row[POLY_EXPIRY] = polyExpiryCurve[i].pnl;
+      if (hasPolyAtBybitExpiry && !hiddenLines.has(POLY_OPTION_EXPIRY) && polyAtBybitExpiryCurve?.[i]) row[POLY_OPTION_EXPIRY] = polyAtBybitExpiryCurve[i].pnl;
 
-      // Bybit overlay
-      if (bybitNowCurve?.[i]) row[BYBIT_NOW] = bybitNowCurve[i].pnl;
-      if (bybitExpiryCurve?.[i]) row[BYBIT_EXPIRY] = bybitExpiryCurve[i].pnl;
+      // Bybit overlay — skip if hidden
+      if (!hiddenLines.has(BYBIT_NOW) && bybitNowCurve?.[i]) row[BYBIT_NOW] = bybitNowCurve[i].pnl;
+      if (!hiddenLines.has(BYBIT_EXPIRY) && bybitExpiryCurve?.[i]) row[BYBIT_EXPIRY] = bybitExpiryCurve[i].pnl;
       if (hasMMCurve && bybitMMNowCurve?.[i]) row['__bybit_mm'] = bybitMMNowCurve[i].pnl;
 
       return row;
     });
 
-    // Bridge sign changes for combined curves
+    // Bridge sign changes for visible combined curves only
     for (let i = 0; i < data.length - 1; i++) {
       for (let c = 0; c < combinedCurves.length; c++) {
+        if (hiddenLines.has(combinedLabels[c])) continue;
         const posKey = `${combinedLabels[c]}__pos`;
         const negKey = `${combinedLabels[c]}__neg`;
         const hasPosNow = posKey in data[i];
@@ -371,7 +374,7 @@ export function ProjectionChart({
     }
 
     return data;
-  }, [combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, polyAtBybitExpiryCurve, bybitNowCurve, bybitExpiryCurve, bybitMMNowCurve, hasPolyAtBybitExpiry, hasMMCurve]);
+  }, [combinedCurves, combinedLabels, hiddenLines, polyNowCurve, polyExpiryCurve, polyAtBybitExpiryCurve, bybitNowCurve, bybitExpiryCurve, bybitMMNowCurve, hasPolyAtBybitExpiry, hasMMCurve]);
 
   // Collect all visible pnl values for Y domain
   const { yDomain, yTicks } = useMemo(() => {
@@ -572,6 +575,7 @@ export function ProjectionChart({
             orientation="left"
             domain={yDomain}
             ticks={yTicks}
+            allowDataOverflow={true}
             tickFormatter={formatYAxisPnl}
             stroke={axisColor}
             fontSize={14}
@@ -582,6 +586,7 @@ export function ProjectionChart({
             orientation="right"
             domain={yDomainPct}
             ticks={yTicksPct}
+            allowDataOverflow={true}
             tickFormatter={formatYAxisPct}
             stroke={axisColor}
             fontSize={14}
@@ -597,11 +602,17 @@ export function ProjectionChart({
             label={{ value: `Spot: $${currentCryptoPrice.toLocaleString()}`, position: 'top', fill: axisColor, fontSize: 14 }}
           />
 
-          {/* Invisible line for right Y-axis scale */}
+          {/* Invisible line for right Y-axis scale — use first visible combined curve so the
+              right axis rescales correctly when curves are hidden */}
           <Line
             yAxisId="right"
             type="linear"
-            dataKey={combinedLabels[0] ? `${combinedLabels[0]}__pos` : POLY_NOW}
+            dataKey={(() => {
+              const visibleLabel = combinedLabels.find(l => !hiddenLines.has(l));
+              if (visibleLabel) return `${visibleLabel}__pos`;
+              if (hasPolyOverlay && !hiddenLines.has(POLY_NOW)) return POLY_NOW;
+              return combinedLabels[0] ? `${combinedLabels[0]}__pos` : POLY_NOW;
+            })()}
             stroke="none"
             strokeWidth={0}
             dot={false}
@@ -638,8 +649,7 @@ export function ProjectionChart({
               dot={false}
               activeDot={ACTIVE_DOT}
               connectNulls={false}
-              hide={hiddenLines.has(label)}
-              strokeOpacity={hiddenLines.has(label) ? 0.15 : COMBINED_OPACITIES[i]}
+              strokeOpacity={COMBINED_OPACITIES[i]}
               legendType="none"
             />,
             <Line
@@ -654,8 +664,7 @@ export function ProjectionChart({
               dot={false}
               activeDot={ACTIVE_DOT}
               connectNulls={false}
-              hide={hiddenLines.has(label)}
-              strokeOpacity={hiddenLines.has(label) ? 0.15 : COMBINED_OPACITIES[i]}
+              strokeOpacity={COMBINED_OPACITIES[i]}
               legendType="none"
             />,
           ])}
@@ -666,20 +675,20 @@ export function ProjectionChart({
               <Line
                 yAxisId="left" type="linear" dataKey={POLY_NOW} name={POLY_NOW}
                 stroke={POLY_BLUE} strokeWidth={2} dot={false} activeDot={ACTIVE_DOT}
-                hide={hiddenLines.has(POLY_NOW)} strokeOpacity={hiddenLines.has(POLY_NOW) ? 0.15 : 0.8}
+                strokeOpacity={0.8}
                 legendType="none"
               />
               <Line
                 yAxisId="left" type="linear" dataKey={POLY_EXPIRY} name={POLY_EXPIRY}
                 stroke={POLY_BLUE} strokeWidth={2} strokeDasharray="14 6" dot={false} activeDot={ACTIVE_DOT}
-                hide={hiddenLines.has(POLY_EXPIRY)} strokeOpacity={hiddenLines.has(POLY_EXPIRY) ? 0.15 : 0.6}
+                strokeOpacity={0.6}
                 legendType="none"
               />
               {hasPolyAtBybitExpiry && (
                 <Line
                   yAxisId="left" type="linear" dataKey={POLY_OPTION_EXPIRY} name={POLY_OPTION_EXPIRY}
                   stroke={POLY_BLUE} strokeWidth={2} strokeDasharray="8 5" dot={false} activeDot={ACTIVE_DOT}
-                  hide={hiddenLines.has(POLY_OPTION_EXPIRY)} strokeOpacity={hiddenLines.has(POLY_OPTION_EXPIRY) ? 0.15 : 0.7}
+                  strokeOpacity={0.7}
                   legendType="none"
                 />
               )}
@@ -692,13 +701,13 @@ export function ProjectionChart({
               <Line
                 yAxisId="left" type="linear" dataKey={BYBIT_NOW} name={BYBIT_NOW}
                 stroke={BYBIT_ORANGE} strokeWidth={2} dot={false} activeDot={ACTIVE_DOT}
-                hide={hiddenLines.has(BYBIT_NOW)} strokeOpacity={hiddenLines.has(BYBIT_NOW) ? 0.15 : 0.8}
+                strokeOpacity={0.8}
                 legendType="none"
               />
               <Line
                 yAxisId="left" type="linear" dataKey={BYBIT_EXPIRY} name={BYBIT_EXPIRY}
                 stroke={BYBIT_ORANGE} strokeWidth={2} strokeDasharray="14 6" dot={false} activeDot={ACTIVE_DOT}
-                hide={hiddenLines.has(BYBIT_EXPIRY)} strokeOpacity={hiddenLines.has(BYBIT_EXPIRY) ? 0.15 : 0.6}
+                strokeOpacity={0.6}
                 legendType="none"
               />
             </>
