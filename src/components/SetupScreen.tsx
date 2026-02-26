@@ -7,7 +7,7 @@ import { BybitOptionChain } from './BybitOptionChain';
 interface SetupScreenProps {
   polyEvent: PolymarketEvent | null;
   bybitChain: BybitChainType | null;
-  onPolyEventLoaded: (event: PolymarketEvent, markets: ParsedMarket[], crypto: CryptoOption | null, optionType: OptionType, spotPrice: number) => void;
+  onPolyEventLoaded: (event: PolymarketEvent, markets: ParsedMarket[], crypto: CryptoOption | null, optionType: OptionType, spotPrice: number, polyUrl: string) => void;
   onBybitChainSelected: (chain: BybitChainType | null) => void;
   onBybitSpotPriceLoaded: (price: number) => void;
   onContinue: () => void;

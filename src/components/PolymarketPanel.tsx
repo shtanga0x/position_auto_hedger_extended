@@ -20,7 +20,7 @@ import {
 import { fetchCurrentPrice } from '../api/binance';
 
 interface PolymarketPanelProps {
-  onEventLoaded: (event: PolymarketEvent, markets: ParsedMarket[], crypto: CryptoOption | null, optionType: OptionType, spotPrice: number) => void;
+  onEventLoaded: (event: PolymarketEvent, markets: ParsedMarket[], crypto: CryptoOption | null, optionType: OptionType, spotPrice: number, polyUrl: string) => void;
 }
 
 const CRYPTO_COLORS: Record<CryptoOption, string> = {
@@ -62,7 +62,7 @@ export function PolymarketPanel({ onEventLoaded }: PolymarketPanelProps) {
       setEvent(eventData);
       setCrypto(detectedCrypto);
       setOptionType(detectedType);
-      onEventLoaded(eventData, parsed, detectedCrypto, detectedType, spot);
+      onEventLoaded(eventData, parsed, detectedCrypto, detectedType, spot, url);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch event data.');
     } finally {

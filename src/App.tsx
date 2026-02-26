@@ -27,14 +27,16 @@ function App() {
 
   // Spot price (from either source)
   const [spotPrice, setSpotPrice] = useState(0);
+  const [polyUrl, setPolyUrl] = useState('');
 
   const handlePolyEventLoaded = useCallback(
-    (event: PolymarketEvent, markets: ParsedMarket[], detectedCrypto: CryptoOption | null, detectedType: OptionType, spot: number) => {
+    (event: PolymarketEvent, markets: ParsedMarket[], detectedCrypto: CryptoOption | null, detectedType: OptionType, spot: number, url: string) => {
       setPolyEvent(event);
       setPolyMarkets(markets);
       setCrypto(detectedCrypto);
       setOptionType(detectedType);
       setSpotPrice(prev => prev || spot);
+      setPolyUrl(url);
     },
     []
   );
@@ -134,6 +136,7 @@ function App() {
             optionType={optionType}
             spotPrice={spotPrice}
             bybitChain={bybitChain}
+            polyUrl={polyUrl}
             onBack={handleBack}
           />
         )}

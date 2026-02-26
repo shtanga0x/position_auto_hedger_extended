@@ -4,6 +4,7 @@ import {
   Typography,
   Paper,
   IconButton,
+  Button,
   Chip,
   CircularProgress,
   Table,
@@ -39,6 +40,7 @@ interface OptimizationScreenProps {
   optionType: OptionType;
   spotPrice: number;
   bybitChain: BybitChainType | null;
+  polyUrl?: string;
   onBack: () => void;
 }
 
@@ -59,6 +61,7 @@ function VizCard({
   bybitSmile,
   polyExpiryTs,
   cryptoSymbol,
+  polyUrl,
 }: {
   strikeResult: StrikeOptResult;
   match: OptMatchResult;
@@ -69,6 +72,7 @@ function VizCard({
   bybitSmile: SmilePoint[];
   polyExpiryTs: number;
   cryptoSymbol: string;
+  polyUrl?: string;
 }) {
   const { market, isUpBarrier, polyIv } = strikeResult;
   const { polyQty, noAskPrice, bybitAsk, bybitFee, shortBid, shortFee, instrument, ticker, shortInstrument, shortTicker } = match;
@@ -167,9 +171,24 @@ function VizCard({
       <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px' }}>
         <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 2, alignItems: 'flex-start' }}>
           <Box>
-            <Typography variant="h6" sx={{ fontWeight: 600, color: '#4A90D9', borderBottom: '2px solid rgba(74, 144, 217, 0.35)', pb: 0.5, mb: 1 }}>
-              Polymarket
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid rgba(74, 144, 217, 0.35)', pb: 0.5, mb: 1 }}>
+              <Typography variant="h6" sx={{ fontWeight: 600, color: '#4A90D9' }}>
+                Polymarket
+              </Typography>
+              {polyUrl && (
+                <Button
+                  component="a"
+                  href={`${polyUrl}?via=delta`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  size="small"
+                  variant="outlined"
+                  sx={{ fontSize: '0.72rem', px: 1, py: 0.25, minWidth: 0, borderColor: 'rgba(74, 144, 217, 0.5)', color: '#4A90D9', '&:hover': { borderColor: '#4A90D9', bgcolor: 'rgba(74, 144, 217, 0.08)' } }}
+                >
+                  Open on Polymarket
+                </Button>
+              )}
+            </Box>
             <Typography variant="body2" color="text.secondary">
               {market.groupItemTitle} — NO ×{polyQty.toFixed(2)} @ {noAskPrice.toFixed(4)} (${(noAskPrice * polyQty).toFixed(2)})
             </Typography>
@@ -303,6 +322,7 @@ export function OptimizationScreen({
   optionType,
   spotPrice,
   bybitChain,
+  polyUrl,
   onBack,
 }: OptimizationScreenProps) {
   const muiTheme = useTheme();
@@ -684,6 +704,7 @@ export function OptimizationScreen({
             bybitSmile={bybitSmile}
             polyExpiryTs={polyExpiryTs}
             cryptoSymbol={crypto ?? 'BTC'}
+            polyUrl={polyUrl}
           />
         </Box>
       )}
