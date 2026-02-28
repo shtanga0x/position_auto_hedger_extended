@@ -50,7 +50,7 @@ export function runOptimization(
     if (noAskPrice < 0.01 || noAskPrice > 0.9999) continue;
 
     // Calibrate poly implied vol at current tau with auto-H
-    const hNow = autoH(tauPoly, 0);
+    const hNow = autoH(tauPoly);
     const polyIv = solveImpliedVol(
       spotPrice, market.strikePrice, tauPoly,
       market.currentPrice, optionType, isUpBarrier, hNow,
@@ -164,7 +164,7 @@ export function runOptimization(
             polyYes = isUpBarrier ? (S >= K ? 1 : 0) : (S <= K ? 1 : 0);
           }
         } else {
-          const hAtEval = autoH(tauPolyRem, 0);
+          const hAtEval = autoH(tauPolyRem);
           polyYes = optionType === 'above'
             ? priceAbove(S, K, polyIv, tauPolyRem, hAtEval)
             : priceHit(S, K, polyIv, tauPolyRem, isUpBarrier, hAtEval);

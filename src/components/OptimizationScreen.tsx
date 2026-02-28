@@ -14,9 +14,10 @@ import {
   TableHead,
   TableRow,
   Slider,
+  Tooltip,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { ArrowBack, BarChart, PhotoCamera, OpenInNew } from '@mui/icons-material';
+import { ArrowBack, BarChart, PhotoCamera, OpenInNew, InfoOutlined } from '@mui/icons-material';
 import type {
   CryptoOption,
   OptionType,
@@ -107,7 +108,7 @@ function VizCard({
     ];
   });
 
-  const [hDelta, setHDelta] = useState(0.00);
+  const [polyIvMult, setPolyIvMult] = useState(1.00);  // IV multiplier for Polymarket smile
 
   const polyPos: PolymarketPosition = useMemo(() => ({
     marketId: market.id,
@@ -150,6 +151,11 @@ function VizCard({
   const nowTs = useMemo(() => Math.floor(Date.now() / 1000), []);
   const polyTauNow = Math.max((polyExpiryTs - nowTs) / (365.25 * 24 * 3600), 0);
 
+  const scaledSmile = useMemo(
+    () => smile.map(pt => ({ ...pt, iv: pt.iv * polyIvMult })),
+    [smile, polyIvMult],
+  );
+
   const { combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve, polyAtBybitExpiryCurve, polyEntryCost, bybitEntryCost, totalEntryCost, grossCost, totalInitialMargin, bybitMMNowCurve } = usePortfolioCurves({
     polyPositions: [polyPos],
     bybitPositions: [longBybitPos, shortBybitPos],
@@ -158,8 +164,7 @@ function VizCard({
     polyTauNow,
     polyExpiryTs,
     optionType,
-    deltaH: hDelta,
-    smile: smile.length > 0 ? smile : undefined,
+    smile: scaledSmile.length > 0 ? scaledSmile : undefined,
     bybitSmile: bybitSmile.length > 0 ? bybitSmile : undefined,
     numPoints: 500,
     spotPrice,
@@ -279,30 +284,50 @@ function VizCard({
         />
       </Paper>
 
-      {/* H exponent offset slider */}
+      {/* Poly IV Multiplier Slider */}
       <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px' }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1 }}>
-          <Typography variant="body2" color="text.secondary">−0.20</Typography>
-          <Box sx={{ textAlign: 'center' }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <Typography variant="body2" color="text.secondary">×0.25</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-              H offset: {hDelta >= 0 ? '+' : ''}{hDelta.toFixed(2)}
+              Poly IV: ×{polyIvMult.toFixed(2)}
+              {polyIvMult !== 1.00 && (
+                <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                  ({polyIvMult > 1 ? '+' : ''}{((polyIvMult - 1) * 100).toFixed(0)}%)
+                </Typography>
+              )}
             </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {'>'}{'>'}7d: H={autoH(10 / 365.25, hDelta).toFixed(2)} &nbsp;|&nbsp;
-              3–7d: H={autoH(5 / 365.25, hDelta).toFixed(2)} &nbsp;|&nbsp;
-              {'<'}3d: H={autoH(1 / 365.25, hDelta).toFixed(2)}
-            </Typography>
+            <Tooltip
+              title={
+                <Box sx={{ p: 0.5, maxWidth: 320 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>Poly IV Multiplier</Typography>
+                  <Typography variant="caption" display="block" sx={{ mb: 0.5 }}>
+                    Scales all Polymarket implied volatilities by a constant factor. ×1.00 = market-calibrated (default).
+                  </Typography>
+                  <Typography variant="caption" display="block" sx={{ mb: 0.5 }}>
+                    <strong>When to increase:</strong> when the market has moved since your snapshot and actual Polymarket prices are higher than the model predicts. Crypto vol rises sharply when price falls (leverage effect) — a 3% BTC drop typically requires ×1.3–1.5 to match observed prices.
+                  </Typography>
+                  <Typography variant="caption" display="block">
+                    <strong>When to decrease:</strong> when you expect vol to revert (e.g. after a spike) or to stress-test a lower-vol scenario.
+                  </Typography>
+                </Box>
+              }
+              placement="top"
+              arrow
+            >
+              <InfoOutlined sx={{ fontSize: 15, color: 'text.secondary', opacity: 0.6, cursor: 'help' }} />
+            </Tooltip>
           </Box>
-          <Typography variant="body2" color="text.secondary">+0.20</Typography>
+          <Typography variant="body2" color="text.secondary">×4.00</Typography>
         </Box>
         <Slider
-          value={hDelta}
-          onChange={(_, v) => setHDelta(v as number)}
-          min={-0.20}
-          max={0.20}
-          step={0.01}
+          value={polyIvMult}
+          onChange={(_, v) => setPolyIvMult(v as number)}
+          min={0.25}
+          max={4.00}
+          step={0.05}
           valueLabelDisplay="auto"
-          valueLabelFormat={(v) => (v >= 0 ? '+' : '') + (v as number).toFixed(2)}
+          valueLabelFormat={(v) => `×${(v as number).toFixed(2)}`}
           sx={{
             color: '#A78BFA',
             '& .MuiSlider-thumb': { bgcolor: '#A78BFA', '&:hover': { boxShadow: '0 0 8px rgba(167, 139, 250, 0.4)' } },
@@ -379,7 +404,6 @@ export function OptimizationScreen({
       version: '3.1.0',
       savedAt: new Date().toISOString(),
       spotPrice,
-      hDelta: 0,
       priceRange: [spotPrice * 0.75, spotPrice * 1.25],
       polyPriceMode: 'ask',
       optionType,
@@ -420,7 +444,7 @@ export function OptimizationScreen({
 
   const ivSmile: SmilePoint[] = useMemo(() => {
     if (!spotPrice || polyTauNow <= 0 || polyMarkets.length === 0) return [];
-    const hNow = autoH(polyTauNow, 0);
+    const hNow = autoH(polyTauNow);
     const points: SmilePoint[] = [];
     for (const market of polyMarkets) {
       if (market.strikePrice <= 0 || market.currentPrice <= 0.001 || market.currentPrice >= 0.999) continue;

@@ -7,17 +7,34 @@ export interface SmilePoint {
 
 /**
  * Auto-compute H based on time-to-expiry in years.
- * Both HIT and ABOVE use the same empirically-calibrated tier schedule:
- *   tau > 7 days  → H = 0.50  (early, standard BS)
- *   3 < tau ≤ 7 d → H = 0.60  (mid-week)
- *   tau ≤ 3 days  → H = 0.65  (near expiry, faster convergence)
+ * Step function: decreases by 0.02 for each additional day remaining,
+ * from H=0.70 at <24 h down to H=0.50 at ≥10 days (constant thereafter).
  *
- * deltaH offsets all tiers uniformly. Result clamped to [0.40, 0.80].
+ *   < 1d  → 0.70
+ *   1–2d  → 0.68
+ *   2–3d  → 0.66
+ *   3–4d  → 0.64
+ *   4–5d  → 0.62
+ *   5–6d  → 0.60
+ *   6–7d  → 0.58
+ *   7–8d  → 0.56
+ *   8–9d  → 0.54
+ *   9–10d → 0.52
+ *   ≥10d  → 0.50
  */
-export function autoH(tauYears: number, deltaH: number = 0): number {
+export function autoH(tauYears: number): number {
   const tauDays = tauYears * 365.25;
-  const base = tauDays > 7 ? 0.50 : tauDays > 3 ? 0.60 : 0.65;
-  return Math.max(0.40, Math.min(0.80, base + deltaH));
+  if (tauDays < 1)  return 0.70;
+  if (tauDays < 2)  return 0.68;
+  if (tauDays < 3)  return 0.66;
+  if (tauDays < 4)  return 0.64;
+  if (tauDays < 5)  return 0.62;
+  if (tauDays < 6)  return 0.60;
+  if (tauDays < 7)  return 0.58;
+  if (tauDays < 8)  return 0.56;
+  if (tauDays < 9)  return 0.54;
+  if (tauDays < 10) return 0.52;
+  return 0.50;
 }
 
 /**
