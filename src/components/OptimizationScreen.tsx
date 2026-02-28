@@ -156,7 +156,7 @@ function VizCard({
     [smile, polyIvMult],
   );
 
-  const { combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve, polyAtBybitExpiryCurve, polyEntryCost, bybitEntryCost, totalEntryCost, bybitMMNowCurve } = usePortfolioCurves({
+  const { combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve, polyAtBybitExpiryCurve, polyEntryCost, bybitEntryCost, totalEntryCost } = usePortfolioCurves({
     polyPositions: [polyPos],
     bybitPositions: [longBybitPos, shortBybitPos],
     lowerPrice: priceRange[0],
@@ -236,7 +236,6 @@ function VizCard({
             polyExpiryCurve={polyExpiryCurve}
             bybitNowCurve={bybitNowCurve}
             bybitExpiryCurve={bybitExpiryCurve}
-            bybitMMNowCurve={bybitMMNowCurve.length > 0 ? bybitMMNowCurve : undefined}
             polyAtBybitExpiryCurve={polyAtBybitExpiryCurve}
             polyEntryCost={polyEntryCost}
             bybitEntryCost={bybitEntryCost}

@@ -35,7 +35,6 @@ interface PortfolioCurvesOutput {
   bybitEntryCost: number;
   totalEntryCost: number;  // gross: all premiums + fees (unsigned)
   totalFees: number;
-  bybitMMNowCurve: ProjectionPoint[]; // portfolio margin requirement curve (NOW)
 }
 
 const YEAR_SEC = 365.25 * 24 * 3600;
@@ -186,7 +185,6 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       bybitEntryCost: 0,
       totalEntryCost: 0,
       totalFees: 0,
-      bybitMMNowCurve: [],
     };
 
     if (lowerPrice <= 0 || upperPrice <= lowerPrice) return empty;
@@ -271,23 +269,6 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       totalFees += b.entryFee;
     }
 
-    // Portfolio Margin curve (Bybit Portfolio Margin mode)
-    // MM at price X = max(0, -portfolio_pnl) + max(0, netShortQty) × PM_COEFF × X
-    // Long options reduce max-loss component; net-short exposure adds contingency floor.
-    // PM_COEFF ≈ 1.5% per net-short contract × index price (Bybit short options contingency).
-    const PM_COEFF = 0.015;
-    const netShortQty = bybitPositions.reduce(
-      (sum, b) => sum + (b.side === 'sell' ? b.quantity : -b.quantity), 0,
-    );
-    const bybitMMNowCurve: ProjectionPoint[] = bybitPositions.length > 0
-      ? grid.map((cryptoPrice, i) => {
-          const bybitPnl = bybitNowCurve[i]?.pnl ?? 0;
-          const maxLoss = Math.max(0, -bybitPnl);
-          const contingency = Math.max(0, netShortQty) * PM_COEFF * cryptoPrice;
-          return { cryptoPrice, pnl: maxLoss + contingency };
-        })
-      : [];
-
     return {
       combinedCurves,
       combinedLabels,
@@ -300,7 +281,6 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       bybitEntryCost,
       totalEntryCost,
       totalFees,
-      bybitMMNowCurve,
     };
   }, [polyPositions, bybitPositions, lowerPrice, upperPrice, polyTauNow, polyExpiryTs, optionType, smile, bybitSmile, numPoints]);
 }
