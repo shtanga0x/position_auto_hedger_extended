@@ -144,8 +144,9 @@ A `ResizeObserver` tracks the chart container width and targets ~11 major labele
 
 - **Polymarket `hit` type**: one-touch barrier formula with auto-H time scaling
 - **Bybit options**: standard Black-Scholes (`bsCallPrice` / `bsPutPrice`)
-- **Auto-H tiers**: τ > 7d → H=0.50, 3–7d → H=0.60, ≤3d → H=0.65
+- **Auto-H schedule**: 10-step fixed function — H=0.70 at <1d, decreasing by 0.02/day, H=0.50 at ≥10d
 - **IV smile**: sticky-moneyness interpolation for chart curves
+- **Poly IV Multiplier**: purple slider (×0.25–×4.00, default ×1.00) scales all calibrated Polymarket IVs — models the leverage effect when spot moves away from the snapshot price
 
 ## What's New vs V4
 
@@ -166,6 +167,7 @@ A `ResizeObserver` tracks the chart container width and targets ~11 major labele
 | Long Option: clean cost display (no fee%) | ✗ | ✓ (v5.3.0) |
 | Snapshot filename with strike + expiry + datetime | ✗ | ✓ (v5.3.1) |
 | Refresh prices button (↻) | ✗ | ✓ (v5.3.1) |
+| Poly IV multiplier slider + 10-step auto-H | ✗ | ✓ (v5.3.2) |
 
 ## Architecture
 
