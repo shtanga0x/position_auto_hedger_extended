@@ -7,8 +7,6 @@ import {
   priceOptionYes,
   interpolateSmile,
   autoH,
-  bybitInitialMargin,
-  bybitMaintenanceMargin,
   type SmilePoint,
 } from '../pricing/engine';
 
@@ -23,7 +21,6 @@ interface PortfolioCurvesInput {
   smile?: SmilePoint[];
   bybitSmile?: SmilePoint[]; // IV smile from Bybit option chain (sticky-moneyness)
   numPoints?: number; // default 500
-  spotPrice?: number; // current index price, used for initial margin calculation
 }
 
 interface PortfolioCurvesOutput {
@@ -38,9 +35,7 @@ interface PortfolioCurvesOutput {
   bybitEntryCost: number;
   totalEntryCost: number;  // gross: all premiums + fees (unsigned)
   totalFees: number;
-  grossCost: number;           // totalEntryCost + initial margin for all short positions
-  totalInitialMargin: number;  // sum of IM for all short Bybit positions (at entry)
-  bybitMMNowCurve: ProjectionPoint[]; // maintenance margin curve for short positions (NOW)
+  bybitMMNowCurve: ProjectionPoint[]; // portfolio margin requirement curve (NOW)
 }
 
 const YEAR_SEC = 365.25 * 24 * 3600;
@@ -176,7 +171,6 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
     smile,
     bybitSmile,
     numPoints = 2000,
-    spotPrice = 0,
   } = input;
 
   return useMemo(() => {
@@ -192,8 +186,6 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       bybitEntryCost: 0,
       totalEntryCost: 0,
       totalFees: 0,
-      grossCost: 0,
-      totalInitialMargin: 0,
       bybitMMNowCurve: [],
     };
 
@@ -279,33 +271,20 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       totalFees += b.entryFee;
     }
 
-    // Initial margin for short positions (at entry-time spot price)
-    let totalInitialMargin = 0;
-    if (spotPrice > 0) {
-      for (const b of bybitPositions) {
-        if (b.side === 'sell') {
-          totalInitialMargin += bybitInitialMargin(spotPrice, b.entryPrice, b.quantity);
-        }
-      }
-    }
-    const grossCost = totalEntryCost + totalInitialMargin;
-
-    // Maintenance margin curve for short positions at current tau (NOW)
-    const bybitMMNowCurve: ProjectionPoint[] = bybitPositions.some(b => b.side === 'sell')
-      ? grid.map(cryptoPrice => {
-          let mm = 0;
-          for (const pos of bybitPositions) {
-            if (pos.side === 'sell') {
-              const tau = bybitTausNow.get(pos.symbol) ?? 0;
-              const rawIv = bybitSmile && bybitSmile.length > 0
-                ? interpolateSmile(bybitSmile, Math.log(cryptoPrice / pos.strike))
-                : pos.markIv;
-              const iv = Math.max(rawIv, 0.001);
-              const markPrice = bsPrice(cryptoPrice, pos.strike, iv, tau, pos.optionsType);
-              mm += bybitMaintenanceMargin(cryptoPrice, markPrice, pos.quantity);
-            }
-          }
-          return { cryptoPrice, pnl: mm };
+    // Portfolio Margin curve (Bybit Portfolio Margin mode)
+    // MM at price X = max(0, -portfolio_pnl) + max(0, netShortQty) × PM_COEFF × X
+    // Long options reduce max-loss component; net-short exposure adds contingency floor.
+    // PM_COEFF ≈ 1.5% per net-short contract × index price (Bybit short options contingency).
+    const PM_COEFF = 0.015;
+    const netShortQty = bybitPositions.reduce(
+      (sum, b) => sum + (b.side === 'sell' ? b.quantity : -b.quantity), 0,
+    );
+    const bybitMMNowCurve: ProjectionPoint[] = bybitPositions.length > 0
+      ? grid.map((cryptoPrice, i) => {
+          const bybitPnl = bybitNowCurve[i]?.pnl ?? 0;
+          const maxLoss = Math.max(0, -bybitPnl);
+          const contingency = Math.max(0, netShortQty) * PM_COEFF * cryptoPrice;
+          return { cryptoPrice, pnl: maxLoss + contingency };
         })
       : [];
 
@@ -321,9 +300,7 @@ export function usePortfolioCurves(input: PortfolioCurvesInput): PortfolioCurves
       bybitEntryCost,
       totalEntryCost,
       totalFees,
-      grossCost,
-      totalInitialMargin,
       bybitMMNowCurve,
     };
-  }, [polyPositions, bybitPositions, lowerPrice, upperPrice, polyTauNow, polyExpiryTs, optionType, smile, bybitSmile, numPoints, spotPrice]);
+  }, [polyPositions, bybitPositions, lowerPrice, upperPrice, polyTauNow, polyExpiryTs, optionType, smile, bybitSmile, numPoints]);
 }

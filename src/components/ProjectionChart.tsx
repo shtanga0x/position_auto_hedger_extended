@@ -272,7 +272,7 @@ function CustomTooltipContent({
           {hasMMCurve && valueMap.has('__bybit_mm') && (valueMap.get('__bybit_mm')! > 0) && (
             <div style={{ display: 'flex', alignItems: 'center', fontSize: 13, padding: '2px 0', color: '#F59E0B' }}>
               <span style={{ marginRight: 6, opacity: 0.7 }}>▲</span>
-              <span>MM Required: ${valueMap.get('__bybit_mm')!.toFixed(2)}</span>
+              <span>Portfolio Margin: ${valueMap.get('__bybit_mm')!.toFixed(2)}</span>
             </div>
           )}
         </>

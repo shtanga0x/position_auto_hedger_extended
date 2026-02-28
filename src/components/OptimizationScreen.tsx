@@ -156,7 +156,7 @@ function VizCard({
     [smile, polyIvMult],
   );
 
-  const { combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve, polyAtBybitExpiryCurve, polyEntryCost, bybitEntryCost, totalEntryCost, grossCost, totalInitialMargin, bybitMMNowCurve } = usePortfolioCurves({
+  const { combinedCurves, combinedLabels, polyNowCurve, polyExpiryCurve, bybitNowCurve, bybitExpiryCurve, polyAtBybitExpiryCurve, polyEntryCost, bybitEntryCost, totalEntryCost, bybitMMNowCurve } = usePortfolioCurves({
     polyPositions: [polyPos],
     bybitPositions: [longBybitPos, shortBybitPos],
     lowerPrice: priceRange[0],
@@ -167,7 +167,6 @@ function VizCard({
     smile: scaledSmile.length > 0 ? scaledSmile : undefined,
     bybitSmile: bybitSmile.length > 0 ? bybitSmile : undefined,
     numPoints: 500,
-    spotPrice,
   });
 
   return (
@@ -213,7 +212,7 @@ function VizCard({
             </Typography>
             <Typography variant="body2" color="text.secondary">
               {shortInstrument.symbol} — sell ×{bybitQty} @ ${shortBid.toFixed(2)}{' '}
-              (${(shortBid * bybitQty).toFixed(2)}, fee: ${shortFee.toFixed(2)}) [IM: ${(Math.max(shortBid, 0.1 * spotPrice) * bybitQty).toFixed(2)}]
+              (${(shortBid * bybitQty).toFixed(2)}, fee: ${shortFee.toFixed(2)})
             </Typography>
           </Box>
         </Box>
@@ -221,11 +220,6 @@ function VizCard({
           <Typography variant="body2" sx={{ color: '#00D1FF', fontWeight: 600 }}>
             Net entry cost: ${totalEntryCost.toFixed(2)}
           </Typography>
-          {totalInitialMargin > 0 && (
-            <Typography variant="body2" sx={{ color: '#F59E0B', fontWeight: 600 }}>
-              Gross cost: ${grossCost.toFixed(2)}
-            </Typography>
-          )}
           <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600 }}>
             Avg P&amp;L ±1%: +${match.avgPnl1.toFixed(2)} &nbsp;|&nbsp; ±10%: +${match.avgPnl10.toFixed(2)} &nbsp;|&nbsp; ±20%: +${match.avgPnl20.toFixed(2)}
           </Typography>
