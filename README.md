@@ -121,20 +121,9 @@ Fees are included in the denominator so tooltip percentages are consistent: a fu
 
 **Position display in the visualization card:**
 - Long Bybit leg: `{symbol} — buy ×{qty} @ ${price} (total: ${total}, fee: ${fee} / {fee%}%)`
-- Short Bybit leg: `{symbol} — sell ×{qty} @ ${price} (total: ${total}, fee: ${fee} / {fee%}%) [IM: ${im}]`
+- Short Bybit leg: `{symbol} — sell ×{qty} @ ${price} (total: ${total}, fee: ${fee} / {fee%}%)`
 
-**Bybit margin formulas (linear options):**
-```
-Initial Margin (IM)  = max(markPrice, 0.10 × indexPrice) × qty
-Maintenance Margin (MM) = max(markPrice, 0.075 × indexPrice) × qty
-```
-
-**Gross cost** is shown in the stats row when the short leg is present:
-```
-Gross cost: $XX.XX  (IM: $XX.XX)
-```
-
-**MM Required in tooltip**: hovering the chart with a short Bybit leg active shows an amber `▲ MM Required: $XX.XX` line reflecting total maintenance margin at that spot price.
+**Margin mode:** Bybit Portfolio Margin is used. Long and short legs offset each other at the portfolio level — no separate per-position initial margin is displayed.
 
 ### 8. Adaptive X-Axis Ticks
 
@@ -161,9 +150,6 @@ A `ResizeObserver` tracks the chart container width and targets ~11 major labele
 | Snapshot export | ✗ | ✓ (JPG via html2canvas) |
 | Adaptive X-axis ticks | ✗ | ✓ |
 | Fee-inclusive entry cost (% denominator) | ✗ | ✓ |
-| Gross cost + initial margin for short options | ✗ | ✓ |
-| MM Required in chart tooltip | ✗ | ✓ |
-| Gross cost display (no redundant IM suffix) | ✗ | ✓ (v5.3.0) |
 | Long Option: clean cost display (no fee%) | ✗ | ✓ (v5.3.0) |
 | Snapshot filename with strike + expiry + datetime | ✗ | ✓ (v5.3.1) |
 | Refresh prices button (↻) | ✗ | ✓ (v5.3.1) |
