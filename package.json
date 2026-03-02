@@ -1,7 +1,7 @@
 {
   "name": "position-auto-hedger-extended",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "6-leg symmetric BTC position: 2× Polymarket HIT NO + long straddle (K_mid call+put) + short strangle (K_outer call+put)",
   "type": "module",
   "scripts": {
