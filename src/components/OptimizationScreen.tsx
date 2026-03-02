@@ -5,7 +5,7 @@ import {
   Slider, Tooltip,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { ArrowBack, BarChart, PhotoCamera, InfoOutlined } from '@mui/icons-material';
+import { ArrowBack, BarChart, PhotoCamera, InfoOutlined, OpenInNew } from '@mui/icons-material';
 import type {
   CryptoOption, ParsedMarket, PolymarketEvent,
   BybitOptionChain as BybitChainType,
@@ -230,6 +230,46 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, upperMarket
     return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} UTC+1`;
   };
 
+  const handleTransferToHedger = useCallback(() => {
+    if (!vizMatch || !bybitChain) return;
+    const { longCallInstrument, longPutInstrument, shortCallInstrument, shortPutInstrument,
+            longQty, shortCallQty, shortPutQty,
+            polyUpperMarket, polyLowerMarket, polyUpperQty, polyLowerQty } = vizMatch;
+    const payload = {
+      version: '3.1.0',
+      savedAt: new Date().toISOString(),
+      spotPrice,
+      priceRange: [spotPrice * 0.75, spotPrice * 1.25],
+      polyPriceMode: 'ask',
+      optionType: 'hit',
+      crypto,
+      polyEvent: polyEvent ? {
+        id: polyEvent.id, slug: polyEvent.slug, title: polyEvent.title,
+        description: (polyEvent as { description?: string }).description ?? '',
+        startDate: polyEvent.startDate, endDate: polyEvent.endDate,
+      } : null,
+      polyMarkets,
+      polySelections: [
+        { marketId: polyUpperMarket.id, side: 'NO', quantity: polyUpperQty },
+        { marketId: polyLowerMarket.id, side: 'NO', quantity: polyLowerQty },
+      ],
+      bybitChain: {
+        expiryLabel: bybitChain.expiryLabel,
+        expiryTimestamp: bybitChain.expiryTimestamp,
+        instruments: bybitChain.instruments,
+        tickers: Array.from(bybitChain.tickers.values()),
+      },
+      bybitSelections: [
+        { symbol: longCallInstrument.symbol, side: 'buy', quantity: longQty },
+        { symbol: longPutInstrument.symbol, side: 'buy', quantity: longQty },
+        { symbol: shortCallInstrument.symbol, side: 'sell', quantity: shortCallQty },
+        { symbol: shortPutInstrument.symbol, side: 'sell', quantity: shortPutQty },
+      ],
+    };
+    localStorage.setItem('position_hedger_transfer', JSON.stringify(payload));
+    window.open('https://shtanga0x.github.io/position_hedger/', '_blank');
+  }, [vizMatch, bybitChain, polyEvent, polyMarkets, crypto, spotPrice]);
+
   const handleSnapshot = useCallback(async () => {
     if (!snapshotRef.current) return;
     const html2canvas = (await import('html2canvas')).default;
@@ -388,6 +428,11 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, upperMarket
         </TableContainer>
       )}
 
+      {vizMatch && (
+        <IconButton onClick={handleTransferToHedger} title="Open in position_hedger" sx={{ position: 'fixed', top: 16, right: 160, zIndex: 1300, bgcolor: isDark ? 'rgba(74, 144, 217, 0.12)' : 'rgba(74, 144, 217, 0.1)', color: '#4A90D9', '&:hover': { bgcolor: isDark ? 'rgba(74, 144, 217, 0.22)' : 'rgba(74, 144, 217, 0.2)' } }}>
+          <OpenInNew />
+        </IconButton>
+      )}
       {vizMatch && (
         <IconButton onClick={handleSnapshot} title="Save snapshot" sx={{ position: 'fixed', top: 16, right: 112, zIndex: 1300, bgcolor: isDark ? 'rgba(34, 197, 94, 0.12)' : 'rgba(34, 197, 94, 0.1)', color: '#22C55E', '&:hover': { bgcolor: isDark ? 'rgba(34, 197, 94, 0.22)' : 'rgba(34, 197, 94, 0.2)' } }}>
           <PhotoCamera />
