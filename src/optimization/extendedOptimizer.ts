@@ -1,6 +1,7 @@
 import type { ParsedMarket, BybitOptionChain, ExtendedMatch } from '../types';
 import {
   priceHit, bybitTradingFee, solveImpliedVol, autoH,
+  bsCallPrice, bsPutPrice,
 } from '../pricing/engine';
 
 const YEAR_SEC = 365.25 * 24 * 3600;
@@ -8,20 +9,26 @@ const YEAR_SEC = 365.25 * 24 * 3600;
 /** Maximum asymmetry ratio between the two Poly barrier distances. */
 const SYMMETRY_RATIO_MAX = 1.4;
 
-/** Minimum barrier distance from spot (as fraction of spot) to consider. */
+/** Minimum barrier distance from spot (as fraction of spot). */
 const MIN_BARRIER_DIST_PCT = 0.02;
 
 /**
  * 6-leg symmetric BTC strategy optimizer.
  *
- * Evaluates P&L at Bybit OPTIONS EXPIRY (tau_opts=0) with Polymarket
- * contracts still having tauPolyRem = tauPoly - tauBybit remaining time.
+ * For each valid (upper, lower) Polymarket barrier pair the algorithm:
  *
- * Key design decisions vs prior version:
- *  1. Evaluation at OPTIONS EXPIRY — options use intrinsic values, poly uses tauPolyRem.
- *  2. Outer strikes searched MOST OTM first (not nearest to symmetric target).
- *  3. polyQty grid-searched as polyQtyRef × k where polyQtyRef = optionsNetDebit / (noAsk1+noAsk2).
- *  4. No analytic break-even constraint that fails when barriers are far from spot.
+ *   Step 1 — Screen pairs by symmetry.
+ *   Step 2 — Find the Bybit structure (kMid, shortQtyRatio, outerCallStrike,
+ *             outerPutStrike) that produces the FLATTEST options-only NOW P&L
+ *             curve in the price range [K_lower, K_upper].
+ *   Step 3 — Analytically solve polyQty so that the combined P&L at the two
+ *             barrier strikes equals ‑targetLoss% of total entry cost.
+ *             "optimizeFor='now'"  → size for NOW curve at barriers
+ *             "optimizeFor='expiry'" → size for EXPIRY curve at barriers
+ *   Step 4 — Compute NOW and EXPIRY metrics; emit one result per pair.
+ *
+ * Returns one ExtendedMatch per poly pair, sorted by |avgPnl1pct / cost + targetLoss| ascending
+ * (closest to the requested NOW target) with EXPIRY metric as secondary info.
  */
 export function runExtendedOptimization(
   polyMarkets: ParsedMarket[],
@@ -29,6 +36,8 @@ export function runExtendedOptimization(
   nowSec: number,
   bybitChain: BybitOptionChain,
   bybitQty: number = 0.01,
+  targetLossFrac: number = 0.05,   // 0.05 = 5% loss at barriers
+  optimizeFor: 'now' | 'expiry' = 'now',
 ): ExtendedMatch[] {
   const calls = bybitChain.instruments.filter(i => i.optionsType === 'Call');
   const puts  = bybitChain.instruments.filter(i => i.optionsType === 'Put');
@@ -45,13 +54,6 @@ export function runExtendedOptimization(
   const getAsk    = (sym: string) => getTicker(sym)?.ask1Price ?? 0;
   const getBid    = (sym: string) => getTicker(sym)?.bid1Price ?? 0;
 
-  // Score grid: ±25% of spot, evaluated AT OPTIONS EXPIRY
-  const SCORE_N   = 300;
-  const scoreLo   = spotPrice * 0.75;
-  const scoreHi   = spotPrice * 1.25;
-  const scoreStep = (scoreHi - scoreLo) / (SCORE_N - 1);
-  const scoreGrid = Float64Array.from({ length: SCORE_N }, (_, i) => scoreLo + scoreStep * i);
-
   // Separate poly markets
   const upperPoly = polyMarkets.filter(m => m.strikePrice > spotPrice);
   const lowerPoly = polyMarkets.filter(m => m.strikePrice < spotPrice);
@@ -62,25 +64,23 @@ export function runExtendedOptimization(
     .sort((a, b) => Math.abs(a - spotPrice) - Math.abs(b - spotPrice))
     .slice(0, 3);
 
-  // Outer call candidates: all calls above spot, sorted MOST OTM first (highest strike first)
+  // Outer call candidates: all calls above spot, MOST OTM first (highest strike first)
   const outerCallPool = calls
     .map(c => c.strike)
     .filter(k => k > spotPrice)
-    .sort((a, b) => b - a);  // descending = most OTM first
+    .sort((a, b) => b - a);   // descending = most OTM first
 
-  // Outer put candidates: all puts below spot, sorted MOST OTM first (lowest strike first)
+  // Outer put candidates: all puts below spot, MOST OTM first (lowest strike first)
   const outerPutPool = puts
     .map(p => p.strike)
     .filter(k => k < spotPrice)
-    .sort((a, b) => a - b);  // ascending = most OTM first
+    .sort((a, b) => a - b);   // ascending = most OTM first
 
   if (outerCallPool.length === 0 || outerPutPool.length === 0) return [];
 
   const shortQtyRatios = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-  const polyQtyFactors = [0.5, 1.0, 2.0, 5.0, 10.0];
 
-  // Accumulate results, dedup by structural key keeping best avgPnl7pct
-  const best = new Map<string, ExtendedMatch>();
+  const results: ExtendedMatch[] = [];
 
   for (const polyUpper of upperPoly) {
     for (const polyLower of lowerPoly) {
@@ -95,18 +95,18 @@ export function runExtendedOptimization(
       const symRatio = Math.max(D_upper, D_lower) / Math.min(D_upper, D_lower);
       if (symRatio > SYMMETRY_RATIO_MAX) continue;
 
-      // ── Poly time calculations ───────────────────────────────────────────────
+      // ── Poly time ────────────────────────────────────────────────────────────
       const tauPolyUpper = Math.max((polyUpper.endDate - nowSec) / YEAR_SEC, 0);
       const tauPolyLower = Math.max((polyLower.endDate - nowSec) / YEAR_SEC, 0);
       if (tauPolyUpper <= 0 || tauPolyLower <= 0) continue;
 
       const tauPolyNow = Math.min(tauPolyUpper, tauPolyLower);
+      if (tauPolyNow < tauBybit * 0.9) continue;  // poly must outlive options
 
-      // Skip if poly expires before Bybit (no meaningful hedge at options expiry)
-      if (tauPolyNow < tauBybit * 0.9) continue;
-
-      // Poly time remaining AFTER Bybit expires
       const tauPolyRem = Math.max(tauPolyNow - tauBybit, 0);
+
+      const hPolyNow = autoH(tauPolyNow);
+      const hPolyRem = autoH(tauPolyRem);
 
       // ── NO entry prices ──────────────────────────────────────────────────────
       const yesBidUpper = (polyUpper.bestBid != null && Number(polyUpper.bestBid) > 0)
@@ -119,32 +119,67 @@ export function runExtendedOptimization(
       const noAskLower = 1 - yesBidLower;
       if (noAskLower < 0.01 || noAskLower > 0.9999) continue;
 
-      // ── Calibrate poly IVs from current YES prices ───────────────────────────
-      const hPoly = autoH(tauPolyNow);
+      // ── Calibrate poly IVs ───────────────────────────────────────────────────
       const polyUpperIv = solveImpliedVol(
-        spotPrice, K_upper, tauPolyUpper, polyUpper.currentPrice, 'hit', true, hPoly,
+        spotPrice, K_upper, tauPolyUpper, polyUpper.currentPrice, 'hit', true, hPolyNow,
       );
       const polyLowerIv = solveImpliedVol(
-        spotPrice, K_lower, tauPolyLower, polyLower.currentPrice, 'hit', false, hPoly,
+        spotPrice, K_lower, tauPolyLower, polyLower.currentPrice, 'hit', false, hPolyNow,
       );
       if (!polyUpperIv || polyUpperIv <= 0 || !polyLowerIv || polyLowerIv <= 0) continue;
 
-      // ── Pre-build poly P&L-per-share grid at OPTIONS EXPIRY ──────────────────
-      // poly_unit(S) = (1 - priceHit_upper - noAskUpper) + (1 - priceHit_lower - noAskLower)
-      const hPolyRem = autoH(tauPolyRem);
-      const polyUnitGrid = new Float64Array(SCORE_N);
-      for (let i = 0; i < SCORE_N; i++) {
-        const S = scoreGrid[i];
-        const upperYes = tauPolyRem > 1e-6
+      // ── Poly unit P&L at the two barrier strikes ─────────────────────────────
+      // evaluated at NOW (tauPolyNow) and EXPIRY (tauPolyRem)
+      const polyUnitNow = (S: number) =>
+        (1 - priceHit(S, K_upper, polyUpperIv, tauPolyNow, true,  hPolyNow) - noAskUpper)
+        + (1 - priceHit(S, K_lower, polyLowerIv, tauPolyNow, false, hPolyNow) - noAskLower);
+
+      const polyUnitExpiry = (S: number) => {
+        const upYes = tauPolyRem > 1e-6
           ? priceHit(S, K_upper, polyUpperIv, tauPolyRem, true,  hPolyRem)
           : (S >= K_upper ? 1.0 : 0.0);
-        const lowerYes = tauPolyRem > 1e-6
+        const loYes = tauPolyRem > 1e-6
           ? priceHit(S, K_lower, polyLowerIv, tauPolyRem, false, hPolyRem)
           : (S <= K_lower ? 1.0 : 0.0);
-        polyUnitGrid[i] = (1 - upperYes - noAskUpper) + (1 - lowerYes - noAskLower);
-      }
+        return (1 - upYes - noAskUpper) + (1 - loYes - noAskLower);
+      };
 
-      // ── Iterate straddle + strangle ──────────────────────────────────────────
+      const polyNowAtUpper = polyUnitNow(K_upper);
+      const polyNowAtLower = polyUnitNow(K_lower);
+      const avgPolyNowAtStrikes = (polyNowAtUpper + polyNowAtLower) / 2;
+
+      const polyExpiryAtUpper = polyUnitExpiry(K_upper);
+      const polyExpiryAtLower = polyUnitExpiry(K_lower);
+      const avgPolyExpiryAtStrikes = (polyExpiryAtUpper + polyExpiryAtLower) / 2;
+
+      // ── Flatness evaluation grid: N points in [K_lower, K_upper] ─────────────
+      const FLAT_N = 80;
+      const flatStep = (K_upper - K_lower) / (FLAT_N - 1);
+      const flatGrid = Float64Array.from({ length: FLAT_N }, (_, i) => K_lower + flatStep * i);
+
+      // ── Expiry / max-loss scoring grid: ±25% of spot ─────────────────────────
+      const SCORE_N   = 200;
+      const scoreLo   = spotPrice * 0.75;
+      const scoreHi   = spotPrice * 1.25;
+      const scoreStep = (scoreHi - scoreLo) / (SCORE_N - 1);
+      const scoreGrid = Float64Array.from({ length: SCORE_N }, (_, i) => scoreLo + scoreStep * i);
+
+      // ── Find best Bybit structure: flattest options-only NOW P&L in [K_lower,K_upper] ──
+      let bestCurvature = Infinity;
+      type Combo = {
+        kMid: number;
+        ocStrike: number; opStrike: number;
+        sqr: number;
+        lcInst: (typeof calls)[0]; lpInst: (typeof puts)[0];
+        ocInst: (typeof calls)[0]; opInst: (typeof puts)[0];
+        longCallAsk: number; longPutAsk: number;
+        shortCallBid: number; shortPutBid: number;
+        fee_lc: number; fee_lp: number; fee_sc: number; fee_sp: number;
+        shortQty: number;
+        optionsNetDebit: number;
+      };
+      let bestCombo: Combo | null = null;
+
       for (const kMid of kMidCandidates) {
         const lcInst = calls.find(c => c.strike === kMid);
         const lpInst = puts.find(p => p.strike === kMid);
@@ -154,44 +189,35 @@ export function runExtendedOptimization(
         const longPutAsk  = getAsk(lpInst.symbol);
         if (longCallAsk <= 0 || longPutAsk <= 0) continue;
 
-        // Fees for long legs (fixed regardless of shortQtyRatio)
-        const fee_lc = bybitTradingFee(spotPrice, longCallAsk, bybitQty);
-        const fee_lp = bybitTradingFee(spotPrice, longPutAsk,  bybitQty);
-
-        // Pre-compute long leg options pnl grid (doesn't depend on short or poly)
-        const longGrid = new Float64Array(SCORE_N);
-        for (let i = 0; i < SCORE_N; i++) {
-          const S = scoreGrid[i];
-          longGrid[i] =
-            bybitQty * (Math.max(0, S - kMid) - longCallAsk) - fee_lc
-            + bybitQty * (Math.max(0, kMid - S) - longPutAsk) - fee_lp;
-        }
-
-        // Outer call candidates: most OTM first, must be above kMid
+        // Outer candidates: most OTM first, must be strictly beyond kMid
         const ocCandidates = outerCallPool.filter(k => k > kMid).slice(0, 7);
-        // Outer put candidates: most OTM first, must be below kMid
         const opCandidates = outerPutPool.filter(k => k < kMid).slice(0, 7);
-
         if (ocCandidates.length === 0 || opCandidates.length === 0) continue;
 
-        for (const ocStrike of ocCandidates) {
-          const ocInst = calls.find(c => c.strike === ocStrike);
-          if (!ocInst) continue;
-          const shortCallBid = getBid(ocInst.symbol);
-          if (shortCallBid <= 0) continue;
+        const iv_lc = bybitChain.tickers.get(lcInst.symbol)?.markIv ?? 0.8;
+        const iv_lp = bybitChain.tickers.get(lpInst.symbol)?.markIv ?? 0.8;
 
-          for (const opStrike of opCandidates) {
-            const opInst = puts.find(p => p.strike === opStrike);
-            if (!opInst) continue;
-            const shortPutBid = getBid(opInst.symbol);
-            if (shortPutBid <= 0) continue;
+        for (const sqr of shortQtyRatios) {
+          const shortQty = bybitQty * sqr;
+          const fee_lc = bybitTradingFee(spotPrice, longCallAsk, bybitQty);
+          const fee_lp = bybitTradingFee(spotPrice, longPutAsk,  bybitQty);
 
-            for (const sqr of shortQtyRatios) {
-              const shortQty = bybitQty * sqr;
+          for (const ocStrike of ocCandidates) {
+            const ocInst = calls.find(c => c.strike === ocStrike);
+            if (!ocInst) continue;
+            const shortCallBid = getBid(ocInst.symbol);
+            if (shortCallBid <= 0) continue;
+            const iv_sc = bybitChain.tickers.get(ocInst.symbol)?.markIv ?? 0.8;
+
+            for (const opStrike of opCandidates) {
+              const opInst = puts.find(p => p.strike === opStrike);
+              if (!opInst) continue;
+              const shortPutBid = getBid(opInst.symbol);
+              if (shortPutBid <= 0) continue;
+
               const fee_sc = bybitTradingFee(spotPrice, shortCallBid, shortQty);
               const fee_sp = bybitTradingFee(spotPrice, shortPutBid,  shortQty);
 
-              // Options net debit = net cash paid for options position (positive = debit)
               const optionsNetDebit =
                 bybitQty * longCallAsk + fee_lc
                 + bybitQty * longPutAsk  + fee_lp
@@ -199,93 +225,152 @@ export function runExtendedOptimization(
                 - shortQty * shortPutBid  + fee_sp;
               if (optionsNetDebit <= 0) continue;
 
-              // Reference poly qty sized so that poly cost ≈ options debit
-              const polyQtyRef = optionsNetDebit / (noAskUpper + noAskLower);
+              const iv_sp = bybitChain.tickers.get(opInst.symbol)?.markIv ?? 0.8;
 
-              // Pre-compute short leg options pnl grid
-              const shortGrid = new Float64Array(SCORE_N);
-              for (let i = 0; i < SCORE_N; i++) {
-                const S = scoreGrid[i];
-                shortGrid[i] =
-                  shortQty * (shortCallBid - Math.max(0, S - ocStrike)) - fee_sc
-                  + shortQty * (shortPutBid  - Math.max(0, opStrike - S)) - fee_sp;
+              // Options-only NOW P&L in [K_lower, K_upper]
+              let maxPnl = -Infinity, minPnl = Infinity;
+              for (let i = 0; i < FLAT_N; i++) {
+                const S = flatGrid[i];
+                const pnl =
+                  bybitQty * (bsCallPrice(S, kMid,    iv_lc, tauBybit) - longCallAsk) - fee_lc
+                  + bybitQty * (bsPutPrice(S, kMid,   iv_lp, tauBybit) - longPutAsk)  - fee_lp
+                  + shortQty * (shortCallBid - bsCallPrice(S, ocStrike, iv_sc, tauBybit)) - fee_sc
+                  + shortQty * (shortPutBid  - bsPutPrice(S,  opStrike, iv_sp, tauBybit)) - fee_sp;
+                if (pnl > maxPnl) maxPnl = pnl;
+                if (pnl < minPnl) minPnl = pnl;
               }
+              const curvature = maxPnl - minPnl;
 
-              for (const kf of polyQtyFactors) {
-                const polyQty = polyQtyRef * kf;
-                if (polyQty < 0.1 || polyQty > 1000) continue;
-
-                // Score at OPTIONS EXPIRY
-                let sum1 = 0, n1 = 0;
-                let sum7 = 0, n7 = 0;
-                let minPnl = Infinity;
-
-                for (let i = 0; i < SCORE_N; i++) {
-                  const pnl = longGrid[i] + shortGrid[i] + polyQty * polyUnitGrid[i];
-                  const pct = Math.abs(scoreGrid[i] / spotPrice - 1);
-                  if (pnl < minPnl) minPnl = pnl;
-                  if (pct <= 0.01) { sum1 += pnl; n1++; }
-                  if (pct <= 0.07) { sum7 += pnl; n7++; }
-                }
-
-                const avgPnl1pct = n1 > 0 ? sum1 / n1 : 0;
-                const avgPnl7pct = n7 > 0 ? sum7 / n7 : 0;
-                if (avgPnl7pct <= 0) continue;
-
-                const totalEntryCost =
-                  bybitQty * longCallAsk + fee_lc
-                  + bybitQty * longPutAsk  + fee_lp
-                  - shortQty * shortCallBid + fee_sc
-                  - shortQty * shortPutBid  + fee_sp
-                  + polyQty * noAskUpper
-                  + polyQty * noAskLower;
-
-                const match: ExtendedMatch = {
-                  longStrike:          kMid,
-                  shortCallStrike:     ocStrike,
-                  shortPutStrike:      opStrike,
-                  longCallInstrument:  lcInst,
-                  longPutInstrument:   lpInst,
-                  shortCallInstrument: ocInst,
-                  shortPutInstrument:  opInst,
-                  polyUpperMarket:     polyUpper,
-                  polyLowerMarket:     polyLower,
-                  longQty:             bybitQty,
-                  shortCallQty:        shortQty,
-                  shortPutQty:         shortQty,
-                  polyUpperQty:        polyQty,
-                  polyLowerQty:        polyQty,
-                  longCallEntry:       longCallAsk,
-                  longPutEntry:        longPutAsk,
-                  shortCallEntry:      shortCallBid,
-                  shortPutEntry:       shortPutBid,
-                  polyUpperNoEntry:    noAskUpper,
-                  polyLowerNoEntry:    noAskLower,
-                  polyUpperIv,
-                  polyLowerIv,
-                  tauPolyRem,
-                  avgPnl1pct,
-                  avgPnl7pct,
-                  centralDip: avgPnl1pct,
-                  maxLoss:    minPnl,
-                  totalEntryCost,
+              if (curvature < bestCurvature) {
+                bestCurvature = curvature;
+                bestCombo = {
+                  kMid, ocStrike, opStrike, sqr,
+                  lcInst, lpInst, ocInst, opInst,
+                  longCallAsk, longPutAsk, shortCallBid, shortPutBid,
+                  fee_lc, fee_lp, fee_sc, fee_sp,
+                  shortQty, optionsNetDebit,
                 };
-
-                // Dedup: keep best avgPnl7pct per structure+shortQty (vary polyQty factor)
-                const key = `${polyUpper.id}|${polyLower.id}|${kMid}|${ocStrike}|${opStrike}|${sqr}`;
-                const existing = best.get(key);
-                if (!existing || avgPnl7pct > existing.avgPnl7pct) {
-                  best.set(key, match);
-                }
               }
             }
           }
         }
       }
+
+      if (!bestCombo) continue;
+
+      const {
+        kMid, ocStrike, opStrike,
+        lcInst, lpInst, ocInst, opInst,
+        longCallAsk, longPutAsk, shortCallBid, shortPutBid,
+        fee_lc, fee_lp, fee_sc, fee_sp,
+        shortQty, optionsNetDebit,
+      } = bestCombo;
+
+      const iv_lc = bybitChain.tickers.get(lcInst.symbol)?.markIv ?? 0.8;
+      const iv_lp = bybitChain.tickers.get(lpInst.symbol)?.markIv ?? 0.8;
+      const iv_sc = bybitChain.tickers.get(ocInst.symbol)?.markIv ?? 0.8;
+      const iv_sp = bybitChain.tickers.get(opInst.symbol)?.markIv ?? 0.8;
+
+      // ── Options P&L helpers ──────────────────────────────────────────────────
+      const optsNow = (S: number) =>
+        bybitQty * (bsCallPrice(S, kMid, iv_lc, tauBybit) - longCallAsk) - fee_lc
+        + bybitQty * (bsPutPrice(S, kMid, iv_lp, tauBybit) - longPutAsk)  - fee_lp
+        + shortQty * (shortCallBid - bsCallPrice(S, ocStrike, iv_sc, tauBybit)) - fee_sc
+        + shortQty * (shortPutBid  - bsPutPrice(S,  opStrike, iv_sp, tauBybit)) - fee_sp;
+
+      const optsExpiry = (S: number) =>
+        bybitQty * (Math.max(0, S - kMid)    - longCallAsk) - fee_lc
+        + bybitQty * (Math.max(0, kMid - S)  - longPutAsk)  - fee_lp
+        + shortQty * (shortCallBid - Math.max(0, S - ocStrike)) - fee_sc
+        + shortQty * (shortPutBid  - Math.max(0, opStrike - S)) - fee_sp;
+
+      // ── Options P&L at the two barrier strikes ───────────────────────────────
+      const optsNowAtUpper  = optsNow(K_upper);
+      const optsNowAtLower  = optsNow(K_lower);
+      const optsExpiryAtUpper = optsExpiry(K_upper);
+      const optsExpiryAtLower = optsExpiry(K_lower);
+
+      const avgOptsNowAtStrikes    = (optsNowAtUpper  + optsNowAtLower)  / 2;
+      const avgOptsExpiryAtStrikes = (optsExpiryAtUpper + optsExpiryAtLower) / 2;
+
+      // ── Analytically solve polyQty for target loss at barriers ───────────────
+      // We want: avgOpts + polyQty × avgPolyUnit = −T × (optionsNetDebit + polyQty × (noAskU + noAskL))
+      // → polyQty = (−avgOpts − T × optionsNetDebit) / (avgPolyUnit + T × (noAskU + noAskL))
+      const T = targetLossFrac;
+      const noAskSum = noAskUpper + noAskLower;
+
+      const avgOpts    = optimizeFor === 'now'    ? avgOptsNowAtStrikes    : avgOptsExpiryAtStrikes;
+      const avgPolyUnit = optimizeFor === 'now'   ? avgPolyNowAtStrikes    : avgPolyExpiryAtStrikes;
+
+      const denom = avgPolyUnit + T * noAskSum;
+      if (denom <= 0) continue;
+
+      const polyQty = (-avgOpts - T * optionsNetDebit) / denom;
+      if (!isFinite(polyQty) || polyQty < 0.1 || polyQty > 2000) continue;
+
+      // ── Total entry cost and final metrics ───────────────────────────────────
+      const totalEntryCost = optionsNetDebit + polyQty * noAskSum;
+      if (totalEntryCost <= 0) continue;
+
+      // NOW P&L at barriers
+      const pnlNowAtUpper = optsNowAtUpper + polyQty * polyNowAtUpper;
+      const pnlNowAtLower = optsNowAtLower + polyQty * polyNowAtLower;
+      const avgPnl1pct = (pnlNowAtUpper + pnlNowAtLower) / 2;
+
+      // EXPIRY P&L at barriers
+      const pnlExpiryAtUpper = optsExpiryAtUpper + polyQty * polyExpiryAtUpper;
+      const pnlExpiryAtLower = optsExpiryAtLower + polyQty * polyExpiryAtLower;
+      const avgPnl7pct = (pnlExpiryAtUpper + pnlExpiryAtLower) / 2;
+
+      // NOW P&L at spot (central dip)
+      const centralDip = optsNow(spotPrice) + polyQty * polyUnitNow(spotPrice);
+
+      // EXPIRY max loss in ±25%
+      let maxLossExpiry = 0;
+      for (let i = 0; i < SCORE_N; i++) {
+        const S = scoreGrid[i];
+        const pnl = optsExpiry(S) + polyQty * polyUnitExpiry(S);
+        if (pnl < maxLossExpiry) maxLossExpiry = pnl;
+      }
+
+      results.push({
+        longStrike:          kMid,
+        shortCallStrike:     ocStrike,
+        shortPutStrike:      opStrike,
+        longCallInstrument:  lcInst,
+        longPutInstrument:   lpInst,
+        shortCallInstrument: ocInst,
+        shortPutInstrument:  opInst,
+        polyUpperMarket:     polyUpper,
+        polyLowerMarket:     polyLower,
+        longQty:             bybitQty,
+        shortCallQty:        shortQty,
+        shortPutQty:         shortQty,
+        polyUpperQty:        polyQty,
+        polyLowerQty:        polyQty,
+        longCallEntry:       longCallAsk,
+        longPutEntry:        longPutAsk,
+        shortCallEntry:      shortCallBid,
+        shortPutEntry:       shortPutBid,
+        polyUpperNoEntry:    noAskUpper,
+        polyLowerNoEntry:    noAskLower,
+        polyUpperIv,
+        polyLowerIv,
+        tauPolyRem,
+        avgPnl1pct,
+        avgPnl7pct,
+        centralDip,
+        maxLoss:   maxLossExpiry,
+        totalEntryCost,
+        optionsCurvature: bestCurvature,
+      });
     }
   }
 
-  return [...best.values()]
-    .sort((a, b) => b.avgPnl7pct - a.avgPnl7pct)
-    .slice(0, 30);
+  // Sort by how close the NOW @ barriers metric is to target (closest first)
+  return results.sort((a, b) => {
+    const errA = Math.abs(a.avgPnl1pct / a.totalEntryCost + targetLossFrac);
+    const errB = Math.abs(b.avgPnl1pct / b.totalEntryCost + targetLossFrac);
+    return errA - errB;
+  });
 }

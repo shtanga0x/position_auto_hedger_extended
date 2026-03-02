@@ -180,11 +180,12 @@ export interface ExtendedMatch {
   polyUpperIv: number;          // calibrated IV for upper barrier
   polyLowerIv: number;          // calibrated IV for lower barrier
 
-  // Scoring (evaluated on NOW curve at current time)
-  tauPolyRem: number;           // legacy — unused in NOW-based evaluation (set to 0)
-  avgPnl1pct: number;           // avg P&L at NOW for |ΔS/S| ≤ 1% (≈0 by break-even sizing)
-  avgPnl7pct: number;           // avg P&L at NOW for |ΔS/S| ≤ 7% (positive from wings)
-  centralDip: number;           // same as avgPnl1pct — kept for display
-  maxLoss: number;              // worst P&L in full ±25% grid (absolute $, negative)
+  // Scoring
+  tauPolyRem: number;           // poly time remaining after Bybit expires (years)
+  avgPnl1pct: number;           // avg NOW P&L at the two barrier strikes ($ — target ≈ -targetLoss% × cost)
+  avgPnl7pct: number;           // avg EXPIRY P&L at the two barrier strikes ($)
+  centralDip: number;           // NOW P&L at spot ($)
+  maxLoss: number;              // worst EXPIRY P&L in full ±25% grid ($, negative)
   totalEntryCost: number;       // net premium paid ($) — options + poly cost
+  optionsCurvature: number;     // options-only NOW peak-to-trough in [K_lower,K_upper] (lower = flatter)
 }

@@ -151,7 +151,7 @@ function VizCard({ match, spotPrice, smile, bybitSmile, polyExpiryTs, cryptoSymb
         <Box sx={{ mt: 1.5, pt: 1.5, borderTop: '1px solid rgba(139, 157, 195, 0.1)', display: 'flex', gap: 3, flexWrap: 'wrap' }}>
           <Typography variant="body2" sx={{ color: '#00D1FF', fontWeight: 600 }}>Net entry: ${totalEntryCost.toFixed(2)}</Typography>
           <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600 }}>
-            Now &plusmn;7%: {match.avgPnl7pct >= 0 ? '+' : ''}{match.avgPnl7pct.toFixed(3)} &nbsp;|&nbsp; Now &plusmn;1%: {match.avgPnl1pct >= 0 ? '+' : ''}{match.avgPnl1pct.toFixed(3)}
+            NOW @ barriers: {match.avgPnl1pct >= 0 ? '+' : ''}{match.avgPnl1pct.toFixed(2)} &nbsp;|&nbsp; EXPIRY @ barriers: {match.avgPnl7pct >= 0 ? '+' : ''}{match.avgPnl7pct.toFixed(2)}
           </Typography>
           <Typography variant="body2" sx={{ color: match.maxLoss < 0 ? '#EF4444' : '#22C55E', fontWeight: 600 }}>
             Max loss: ${match.maxLoss.toFixed(2)}
@@ -221,6 +221,8 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
   const isDark = muiTheme.palette.mode === 'dark';
   const [vizMatch, setVizMatch] = useState<ExtendedMatch | null>(null);
   const [bybitQtyInput, setBybitQtyInput] = useState('0.01');
+  const [targetLossInput, setTargetLossInput] = useState('5');
+  const [optimizeFor, setOptimizeFor] = useState<'now' | 'expiry'>('now');
   const snapshotRef = useRef<HTMLDivElement>(null);
 
   const fmtTimeUTC1 = (ms: number) => {
@@ -285,12 +287,17 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
     return (!isNaN(v) && v > 0) ? Math.round(v * 100) / 100 : 0.01;
   }, [bybitQtyInput]);
 
+  const targetLossFrac = useMemo(() => {
+    const v = parseFloat(targetLossInput);
+    return (!isNaN(v) && v > 0 && v < 100) ? v / 100 : 0.05;
+  }, [targetLossInput]);
+
   const nowSec = useMemo(() => Math.floor(Date.now() / 1000), []);
 
   const optResults = useMemo(() => {
     if (!polyMarkets.length || !bybitChain || spotPrice <= 0) return [];
-    return runExtendedOptimization(polyMarkets, spotPrice, nowSec, bybitChain, bybitQty);
-  }, [polyMarkets, spotPrice, bybitChain, nowSec, bybitQty]);
+    return runExtendedOptimization(polyMarkets, spotPrice, nowSec, bybitChain, bybitQty, targetLossFrac, optimizeFor);
+  }, [polyMarkets, spotPrice, bybitChain, nowSec, bybitQty, targetLossFrac, optimizeFor]);
 
   const polyExpiryTs = polyEvent?.endDate ?? 0;
   const polyTauNow = useMemo(() => Math.max((polyExpiryTs - nowSec) / (365.25 * 24 * 3600), 0), [polyExpiryTs, nowSec]);
@@ -357,6 +364,24 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
                 sx={{ width: 52, bgcolor: 'transparent', border: 'none', color: '#FF8C00', fontSize: '0.75rem', fontWeight: 700, outline: 'none', fontFamily: 'monospace', '&::-webkit-inner-spin-button': { WebkitAppearance: 'none' }, '&::-webkit-outer-spin-button': { WebkitAppearance: 'none' } }}
               />
             </Box>
+            {/* Target loss at barriers */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '16px', px: 1, py: '3px', bgcolor: 'rgba(239, 68, 68, 0.06)' }}>
+              <Typography variant="caption" sx={{ color: '#EF4444', fontSize: '0.72rem', userSelect: 'none' }}>Loss @ barriers:</Typography>
+              <Box component="input" type="number" value={targetLossInput}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setTargetLossInput(e.target.value); setVizMatch(null); }}
+                step="0.5" min="0.1" max="50"
+                sx={{ width: 36, bgcolor: 'transparent', border: 'none', color: '#EF4444', fontSize: '0.75rem', fontWeight: 700, outline: 'none', fontFamily: 'monospace', '&::-webkit-inner-spin-button': { WebkitAppearance: 'none' }, '&::-webkit-outer-spin-button': { WebkitAppearance: 'none' } }}
+              />
+              <Typography variant="caption" sx={{ color: '#EF4444', fontSize: '0.72rem', userSelect: 'none' }}>%</Typography>
+            </Box>
+            {/* Optimize for NOW or EXPIRY */}
+            <Box
+              onClick={() => { setOptimizeFor(v => v === 'now' ? 'expiry' : 'now'); setVizMatch(null); }}
+              sx={{ display: 'flex', alignItems: 'center', gap: 0.5, border: `1px solid ${optimizeFor === 'now' ? 'rgba(0,209,255,0.4)' : 'rgba(167,139,250,0.4)'}`, borderRadius: '16px', px: 1.2, py: '3px', bgcolor: optimizeFor === 'now' ? 'rgba(0,209,255,0.08)' : 'rgba(167,139,250,0.08)', cursor: 'pointer', userSelect: 'none' }}>
+              <Typography variant="caption" sx={{ color: optimizeFor === 'now' ? '#00D1FF' : '#A78BFA', fontSize: '0.72rem', fontWeight: 700 }}>
+                {optimizeFor === 'now' ? 'NOW curve' : 'EXPIRY curve'}
+              </Typography>
+            </Box>
           </Box>
         </Box>
       </Box>
@@ -389,8 +414,8 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
                 <TableCell sx={{ fontWeight: 700, color: '#4A90D9' }}>Poly Pair (↑/↓)</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: '#FF8C00' }}>Bybit Long / Short</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: '#4A90D9' }}>Poly qty</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#8B9DC3' }}>Now &plusmn;1%</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#22C55E' }}>Now &plusmn;7%</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#EF4444' }}>NOW @ barriers</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#A78BFA' }}>EXPIRY @ barriers</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: '#EF4444' }}>Max Loss</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: '#8B9DC3' }}></TableCell>
               </TableRow>
@@ -398,9 +423,11 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
             <TableBody>
               {optResults.map((result, idx) => {
                 const sel = vizMatch === result;
-                const p7 = result.totalEntryCost > 0 ? (result.avgPnl7pct / result.totalEntryCost) * 100 : 0;
-                const pnl1Color = result.avgPnl1pct >= -0.005 ? '#22C55E' : '#EF4444';
-                const pnl7Color = result.avgPnl7pct > 0 ? '#22C55E' : '#EF4444';
+                const nowPct  = result.totalEntryCost > 0 ? (result.avgPnl1pct / result.totalEntryCost) * 100 : 0;
+                const exPct   = result.totalEntryCost > 0 ? (result.avgPnl7pct / result.totalEntryCost) * 100 : 0;
+                // Color: green if within ±2pp of target, red otherwise
+                const nowColor = Math.abs(nowPct + targetLossFrac * 100) <= 2 ? '#22C55E' : '#EF4444';
+                const exColor  = result.avgPnl7pct >= 0 ? '#22C55E' : result.avgPnl7pct > -result.totalEntryCost * 0.10 ? '#FFB020' : '#EF4444';
                 return (
                   <TableRow key={idx} sx={{ '&:hover': { bgcolor: isDark ? 'rgba(139, 157, 195, 0.03)' : 'rgba(0,0,0,0.02)' }, bgcolor: sel ? 'rgba(0, 209, 255, 0.04)' : 'transparent' }}>
                     <TableCell sx={{ color: '#8B9DC3', fontWeight: 600, fontFamily: 'monospace' }}>{idx + 1}</TableCell>
@@ -418,26 +445,26 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#4A90D9', fontWeight: 600 }}>
-                        {result.polyUpperQty.toFixed(3)} each
+                        {result.polyUpperQty.toFixed(1)} each
                       </Typography>
                       <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                        NO×2 positions
+                        NO×2 pos
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ color: pnl1Color, fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 600 }}>
-                        {result.avgPnl1pct >= 0 ? '+' : ''}{result.avgPnl1pct.toFixed(3)}
+                      <Typography variant="body2" sx={{ color: nowColor, fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 600 }}>
+                        {result.avgPnl1pct >= 0 ? '+' : ''}{result.avgPnl1pct.toFixed(2)}
                       </Typography>
-                      <Typography variant="caption" sx={{ color: pnl1Color, opacity: 0.7 }}>(break-even)</Typography>
+                      <Typography variant="caption" sx={{ color: nowColor, opacity: 0.7 }}>{nowPct.toFixed(1)}% of cost</Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ color: pnl7Color, fontWeight: 700, fontFamily: 'monospace', fontSize: '0.78rem' }}>
-                        {result.avgPnl7pct >= 0 ? '+' : ''}{result.avgPnl7pct.toFixed(3)}
+                      <Typography variant="body2" sx={{ color: exColor, fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 600 }}>
+                        {result.avgPnl7pct >= 0 ? '+' : ''}{result.avgPnl7pct.toFixed(2)}
                       </Typography>
-                      <Typography variant="caption" sx={{ color: pnl7Color, opacity: 0.7 }}>+{p7.toFixed(1)}% roi</Typography>
+                      <Typography variant="caption" sx={{ color: exColor, opacity: 0.7 }}>{exPct.toFixed(1)}% of cost</Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ color: result.maxLoss < -0.01 ? '#EF4444' : '#22C55E', fontFamily: 'monospace', fontSize: '0.78rem' }}>{result.maxLoss.toFixed(3)}</Typography>
+                      <Typography variant="body2" sx={{ color: result.maxLoss < -0.01 ? '#EF4444' : '#22C55E', fontFamily: 'monospace', fontSize: '0.78rem' }}>{result.maxLoss.toFixed(2)}</Typography>
                     </TableCell>
                     <TableCell>
                       <IconButton size="small" onClick={() => handleViz(result)} sx={{ p: 0.5, color: sel ? '#00D1FF' : 'text.secondary', '&:hover': { color: '#00D1FF' } }}>
