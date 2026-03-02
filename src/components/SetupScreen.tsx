@@ -1,4 +1,4 @@
-import { Box, Typography, Paper, Button, FormControl, InputLabel, Select, MenuItem } from '@mui/material';
+import { Box, Typography, Paper, Button } from '@mui/material';
 import { Hub } from '@mui/icons-material';
 import type { CryptoOption, OptionType, ParsedMarket, PolymarketEvent, BybitOptionChain as BybitChainType } from '../types';
 import { PolymarketPanel } from './PolymarketPanel';
@@ -6,42 +6,22 @@ import { BybitOptionChain } from './BybitOptionChain';
 
 interface SetupScreenProps {
   polyEvent: PolymarketEvent | null;
-  polyMarkets: ParsedMarket[];
-  spotPrice: number;
-  upperMarket: ParsedMarket | null;
-  lowerMarket: ParsedMarket | null;
   bybitChain: BybitChainType | null;
   onPolyEventLoaded: (event: PolymarketEvent, markets: ParsedMarket[], crypto: CryptoOption | null, optionType: OptionType, spotPrice: number, polyUrl: string) => void;
   onBybitChainSelected: (chain: BybitChainType | null) => void;
   onBybitSpotPriceLoaded: (price: number) => void;
-  onUpperMarketChange: (market: ParsedMarket | null) => void;
-  onLowerMarketChange: (market: ParsedMarket | null) => void;
   onContinue: () => void;
 }
 
 export function SetupScreen({
   polyEvent,
-  polyMarkets,
-  spotPrice,
-  upperMarket,
-  lowerMarket,
   bybitChain,
   onPolyEventLoaded,
   onBybitChainSelected,
   onBybitSpotPriceLoaded,
-  onUpperMarketChange,
-  onLowerMarketChange,
   onContinue,
 }: SetupScreenProps) {
-  const canContinue = polyEvent !== null && upperMarket !== null && lowerMarket !== null && bybitChain !== null;
-
-  // Markets above and below spot (for selectors)
-  const upperCandidates = [...polyMarkets]
-    .filter(m => m.strikePrice > spotPrice)
-    .sort((a, b) => a.strikePrice - b.strikePrice);
-  const lowerCandidates = [...polyMarkets]
-    .filter(m => m.strikePrice < spotPrice)
-    .sort((a, b) => a.strikePrice - b.strikePrice);
+  const canContinue = polyEvent !== null && bybitChain !== null;
 
   return (
     <Box sx={{ minHeight: '100vh', overflow: 'auto', display: 'flex', flexDirection: 'column', p: 2, gap: 2.5, position: 'relative' }}>
@@ -84,83 +64,6 @@ export function SetupScreen({
         </Paper>
       </Box>
 
-      {/* Strategy market selectors */}
-      {polyEvent !== null && polyMarkets.length > 0 && (
-        <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px', position: 'relative', zIndex: 1 }}>
-          <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#00D1FF', mb: 1.5 }}>
-            Strategy Markets — Buy NO on both HIT barriers
-          </Typography>
-          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-            {/* Upper barrier */}
-            <Box>
-              <FormControl fullWidth size="small">
-                <InputLabel sx={{ fontSize: '0.8rem' }}>Upper Barrier (buy NO)</InputLabel>
-                <Select
-                  value={upperMarket?.id ?? ''}
-                  label="Upper Barrier (buy NO)"
-                  onChange={e => {
-                    const m = polyMarkets.find(x => x.id === e.target.value) ?? null;
-                    onUpperMarketChange(m);
-                  }}
-                  sx={{ fontSize: '0.8rem' }}
-                >
-                  {upperCandidates.map(m => {
-                    const noAsk = m.bestBid != null ? (1 - m.bestBid) : (1 - m.currentPrice);
-                    return (
-                      <MenuItem key={m.id} value={m.id} sx={{ fontSize: '0.8rem' }}>
-                        ↑ ${m.strikePrice.toLocaleString()} — NO ask: {noAsk.toFixed(3)}
-                      </MenuItem>
-                    );
-                  })}
-                  {upperCandidates.length === 0 && (
-                    <MenuItem disabled value="">No markets above spot</MenuItem>
-                  )}
-                </Select>
-              </FormControl>
-              {upperMarket && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, pl: 0.5 }}>
-                  Strike: ${upperMarket.strikePrice.toLocaleString()} &nbsp;|&nbsp;
-                  NO ask: {upperMarket.bestBid != null ? (1 - upperMarket.bestBid).toFixed(4) : (1 - upperMarket.currentPrice).toFixed(4)}
-                </Typography>
-              )}
-            </Box>
-            {/* Lower barrier */}
-            <Box>
-              <FormControl fullWidth size="small">
-                <InputLabel sx={{ fontSize: '0.8rem' }}>Lower Barrier (buy NO)</InputLabel>
-                <Select
-                  value={lowerMarket?.id ?? ''}
-                  label="Lower Barrier (buy NO)"
-                  onChange={e => {
-                    const m = polyMarkets.find(x => x.id === e.target.value) ?? null;
-                    onLowerMarketChange(m);
-                  }}
-                  sx={{ fontSize: '0.8rem' }}
-                >
-                  {lowerCandidates.map(m => {
-                    const noAsk = m.bestBid != null ? (1 - m.bestBid) : (1 - m.currentPrice);
-                    return (
-                      <MenuItem key={m.id} value={m.id} sx={{ fontSize: '0.8rem' }}>
-                        ↓ ${m.strikePrice.toLocaleString()} — NO ask: {noAsk.toFixed(3)}
-                      </MenuItem>
-                    );
-                  })}
-                  {lowerCandidates.length === 0 && (
-                    <MenuItem disabled value="">No markets below spot</MenuItem>
-                  )}
-                </Select>
-              </FormControl>
-              {lowerMarket && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, pl: 0.5 }}>
-                  Strike: ${lowerMarket.strikePrice.toLocaleString()} &nbsp;|&nbsp;
-                  NO ask: {lowerMarket.bestBid != null ? (1 - lowerMarket.bestBid).toFixed(4) : (1 - lowerMarket.currentPrice).toFixed(4)}
-                </Typography>
-              )}
-            </Box>
-          </Box>
-        </Paper>
-      )}
-
       {/* Run Optimization button */}
       <Box sx={{ textAlign: 'center', position: 'relative', zIndex: 1 }}>
         <Button
@@ -176,7 +79,7 @@ export function SetupScreen({
         </Button>
         {!canContinue && (
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-            Load a Polymarket event, select upper + lower barriers, and choose a Bybit expiry
+            Load a Polymarket event and choose a Bybit expiry to continue
           </Typography>
         )}
       </Box>

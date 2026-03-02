@@ -4,18 +4,31 @@ import { priceHit, bybitTradingFee, solveImpliedVol, autoH } from '../pricing/en
 const YEAR_SEC = 365.25 * 24 * 3600;
 const NUM_GRID = 200;
 
+function closestStrike(candidates: number[], target: number): number | null {
+  if (candidates.length === 0) return null;
+  return candidates.reduce((best, k) =>
+    Math.abs(k - target) < Math.abs(best - target) ? k : best,
+  );
+}
+
 /**
- * Run optimization for the 6-leg symmetric BTC strategy:
- *   1. Long straddle at K_mid (buy call + put at same strike near spot)
- *   2. Short strangle at outer strikes (sell call at K_outer_call, sell put at K_outer_put)
- *   3. 2× Polymarket NO (upper HIT + lower HIT barriers)
+ * Run optimization for the 6-leg symmetric BTC strategy across ALL available
+ * Polymarket strike pairs (every upper × lower combination):
  *
- * Evaluated at options expiry (tau_bybit → 0, poly still has tauPolyRem remaining).
- * W-shaped P&L target: peaks at ±3–7% from spot, small dip at spot, loss beyond barriers.
+ *   1. Long straddle at K_mid (closest Bybit strike to spot, fixed for all pairs)
+ *   2. Short strangle: outer Bybit strikes derived by symmetric distance —
+ *        D_sym = min(K_poly_upper − spot, spot − K_poly_lower)
+ *        outer_call_target = spot + D_sym  →  closest available Bybit call
+ *        outer_put_target  = spot − D_sym  →  closest available Bybit put
+ *   3. 2× Polymarket NO positions (upper HIT + lower HIT)
+ *
+ * Qty ratios are optimised independently for each side (short call, short put,
+ * poly upper, poly lower), allowing asymmetric sizing when barriers are unequal.
+ *
+ * Evaluated at options expiry (tau_bybit→0, poly still has tauPolyRem remaining).
  */
 export function runExtendedOptimization(
-  polyUpperMarket: ParsedMarket,
-  polyLowerMarket: ParsedMarket,
+  polyMarkets: ParsedMarket[],
   spotPrice: number,
   nowSec: number,
   bybitChain: BybitOptionChain,
@@ -23,237 +36,236 @@ export function runExtendedOptimization(
 ): ExtendedMatch[] {
   const results: ExtendedMatch[] = [];
 
-  // --- Compute taus ---
-  const tauPolyUpper = Math.max((polyUpperMarket.endDate - nowSec) / YEAR_SEC, 0);
-  const tauPolyLower = Math.max((polyLowerMarket.endDate - nowSec) / YEAR_SEC, 0);
-  if (tauPolyUpper <= 0 || tauPolyLower <= 0) return [];
+  // --- Separate upper / lower poly markets ---
+  const upperPoly = polyMarkets.filter(m => m.strikePrice > spotPrice);
+  const lowerPoly = polyMarkets.filter(m => m.strikePrice < spotPrice);
+  if (upperPoly.length === 0 || lowerPoly.length === 0) return [];
 
-  const tauBybit = Math.max(((bybitChain.expiryTimestamp / 1000) - nowSec) / YEAR_SEC, 0);
-  if (tauBybit <= 0) return [];
-
-  // Use the earlier poly expiry as reference (they're usually the same for weekly events)
-  const tauPoly = Math.min(tauPolyUpper, tauPolyLower);
-  // tauPolyRem = poly time remaining AFTER options expire
-  const tauPolyRem = Math.max(tauPoly - tauBybit, 0);
-
-  // --- Calibrate Polymarket IVs ---
-  const hPoly = autoH(tauPoly);
-
-  const yesBidUpper = (polyUpperMarket.bestBid != null && polyUpperMarket.bestBid > 0)
-    ? polyUpperMarket.bestBid : polyUpperMarket.currentPrice;
-  const noAskUpper = 1 - yesBidUpper;
-  if (noAskUpper < 0.01 || noAskUpper > 0.9999) return [];
-
-  const yesBidLower = (polyLowerMarket.bestBid != null && polyLowerMarket.bestBid > 0)
-    ? polyLowerMarket.bestBid : polyLowerMarket.currentPrice;
-  const noAskLower = 1 - yesBidLower;
-  if (noAskLower < 0.01 || noAskLower > 0.9999) return [];
-
-  const polyUpperIv = solveImpliedVol(
-    spotPrice, polyUpperMarket.strikePrice, tauPolyUpper,
-    polyUpperMarket.currentPrice, 'hit', true, hPoly,
-  );
-  const polyLowerIv = solveImpliedVol(
-    spotPrice, polyLowerMarket.strikePrice, tauPolyLower,
-    polyLowerMarket.currentPrice, 'hit', false, hPoly,
-  );
-
-  if (!polyUpperIv || polyUpperIv <= 0 || !polyLowerIv || polyLowerIv <= 0) return [];
-
-  const K_upper = polyUpperMarket.strikePrice;
-  const K_lower = polyLowerMarket.strikePrice;
-
-  // --- Build candidate sets ---
+  // --- Bybit option sets ---
   const calls = bybitChain.instruments.filter(i => i.optionsType === 'Call');
-  const puts = bybitChain.instruments.filter(i => i.optionsType === 'Put');
+  const puts  = bybitChain.instruments.filter(i => i.optionsType === 'Put');
 
-  // midCandidates: strikes with BOTH call and put available, within ±2% of spot
-  const midCallMap = new Map<number, typeof calls[0]>();
-  const midPutMap = new Map<number, typeof puts[0]>();
+  // --- Fixed straddle strike: closest Bybit strike to spot that has both C+P ---
+  const callStrikeSet = new Set(calls.map(c => c.strike));
+  const putStrikeSet  = new Set(puts.map(p => p.strike));
+  const straddleCandidates = [...callStrikeSet].filter(
+    k => putStrikeSet.has(k) && k >= spotPrice * 0.97 && k <= spotPrice * 1.03,
+  );
+  if (straddleCandidates.length === 0) return [];
 
-  for (const c of calls) {
-    if (c.strike >= spotPrice * 0.98 && c.strike <= spotPrice * 1.02) {
-      midCallMap.set(c.strike, c);
-    }
-  }
-  for (const p of puts) {
-    if (p.strike >= spotPrice * 0.98 && p.strike <= spotPrice * 1.02) {
-      midPutMap.set(p.strike, p);
-    }
-  }
+  const kMid = closestStrike(straddleCandidates, spotPrice)!;
+  const longCallInst = calls.find(c => c.strike === kMid)!;
+  const longPutInst  = puts.find(p => p.strike === kMid)!;
 
-  const midStrikes: number[] = [];
-  for (const k of midCallMap.keys()) {
-    if (midPutMap.has(k)) midStrikes.push(k);
-  }
+  const longCallTicker = bybitChain.tickers.get(longCallInst.symbol);
+  const longPutTicker  = bybitChain.tickers.get(longPutInst.symbol);
+  if (!longCallTicker || !longPutTicker) return [];
 
-  if (midStrikes.length === 0) return [];
+  const longCallAsk = longCallTicker.ask1Price;
+  const longPutAsk  = longPutTicker.ask1Price;
+  if (longCallAsk <= 0 || longPutAsk <= 0) return [];
 
-  // Grid: ±25% around spot
+  // Pre-compute long fees (same for all combos)
+  const longCallFee = bybitTradingFee(spotPrice, longCallAsk, bybitQty);
+  const longPutFee  = bybitTradingFee(spotPrice, longPutAsk,  bybitQty);
+
+  // Available outer strike lists (must be beyond the straddle strike)
+  const outerCallStrikes = calls.filter(c => c.strike > kMid).map(c => c.strike);
+  const outerPutStrikes  = puts.filter(p => p.strike < kMid).map(p => p.strike);
+
+  // --- P&L evaluation grid (±25% from spot) ---
   const gridLower = 0.75 * spotPrice;
   const gridUpper = 1.25 * spotPrice;
-  const gridStep = (gridUpper - gridLower) / (NUM_GRID - 1);
+  const gridStep  = (gridUpper - gridLower) / (NUM_GRID - 1);
 
-  // Short call: CALL strikes between (K_mid * 1.02, K_upper]
-  // Short put:  PUT  strikes between [K_lower, K_mid * 0.98)
+  // --- Qty ratio grids (independent per side) ---
   const qShortRatios = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-  const qPolyRatios  = [0, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0];
+  const qPolyRatios  = [0, 0.5, 1.0, 1.5, 2.0, 3.0];
 
-  for (const kMid of midStrikes) {
-    const longCallInst = midCallMap.get(kMid)!;
-    const longPutInst  = midPutMap.get(kMid)!;
+  // --- Iterate all Poly pairs ---
+  for (const polyUpper of upperPoly) {
+    for (const polyLower of lowerPoly) {
+      const K_upper = polyUpper.strikePrice;
+      const K_lower = polyLower.strikePrice;
 
-    const longCallTicker = bybitChain.tickers.get(longCallInst.symbol);
-    const longPutTicker  = bybitChain.tickers.get(longPutInst.symbol);
-    if (!longCallTicker || !longPutTicker) continue;
+      // --- Taus ---
+      const tauPolyUpper = Math.max((polyUpper.endDate - nowSec) / YEAR_SEC, 0);
+      const tauPolyLower = Math.max((polyLower.endDate - nowSec) / YEAR_SEC, 0);
+      if (tauPolyUpper <= 0 || tauPolyLower <= 0) continue;
 
-    const longCallAsk = longCallTicker.ask1Price;
-    const longPutAsk  = longPutTicker.ask1Price;
-    if (longCallAsk <= 0 || longPutAsk <= 0) continue;
+      const tauBybit = Math.max(((bybitChain.expiryTimestamp / 1000) - nowSec) / YEAR_SEC, 0);
+      if (tauBybit <= 0) continue;
 
-    const outerCalls = calls.filter(c =>
-      c.strike > kMid * 1.02 && c.strike <= K_upper,
-    );
-    const outerPuts = puts.filter(p =>
-      p.strike < kMid * 0.98 && p.strike >= K_lower,
-    );
+      const tauPoly    = Math.min(tauPolyUpper, tauPolyLower);
+      const tauPolyRem = Math.max(tauPoly - tauBybit, 0);
 
-    if (outerCalls.length === 0 || outerPuts.length === 0) continue;
+      // --- Calibrate Poly IVs ---
+      const hPoly = autoH(tauPoly);
 
-    for (const shortCallInst of outerCalls) {
+      const yesBidUpper = (polyUpper.bestBid != null && polyUpper.bestBid > 0)
+        ? polyUpper.bestBid : polyUpper.currentPrice;
+      const noAskUpper = 1 - yesBidUpper;
+      if (noAskUpper < 0.01 || noAskUpper > 0.9999) continue;
+
+      const yesBidLower = (polyLower.bestBid != null && polyLower.bestBid > 0)
+        ? polyLower.bestBid : polyLower.currentPrice;
+      const noAskLower = 1 - yesBidLower;
+      if (noAskLower < 0.01 || noAskLower > 0.9999) continue;
+
+      const polyUpperIv = solveImpliedVol(
+        spotPrice, K_upper, tauPolyUpper, polyUpper.currentPrice, 'hit', true, hPoly,
+      );
+      const polyLowerIv = solveImpliedVol(
+        spotPrice, K_lower, tauPolyLower, polyLower.currentPrice, 'hit', false, hPoly,
+      );
+      if (!polyUpperIv || polyUpperIv <= 0 || !polyLowerIv || polyLowerIv <= 0) continue;
+
+      // --- Symmetric Bybit outer strikes ---
+      // D_sym = min distance from spot to either Poly barrier → symmetric bracket
+      const D_sym = Math.min(K_upper - spotPrice, spotPrice - K_lower);
+
+      const shortCallStrike = closestStrike(outerCallStrikes, spotPrice + D_sym);
+      const shortPutStrike  = closestStrike(outerPutStrikes,  spotPrice - D_sym);
+      if (shortCallStrike === null || shortPutStrike === null) continue;
+      if (shortCallStrike <= kMid || shortPutStrike >= kMid) continue;
+
+      const shortCallInst = calls.find(c => c.strike === shortCallStrike)!;
+      const shortPutInst  = puts.find(p => p.strike === shortPutStrike)!;
+
       const shortCallTicker = bybitChain.tickers.get(shortCallInst.symbol);
-      if (!shortCallTicker) continue;
+      const shortPutTicker  = bybitChain.tickers.get(shortPutInst.symbol);
+      if (!shortCallTicker || !shortPutTicker) continue;
+
       const shortCallBid = shortCallTicker.bid1Price;
-      if (shortCallBid <= 0) continue;
+      const shortPutBid  = shortPutTicker.bid1Price;
+      if (shortCallBid <= 0 || shortPutBid <= 0) continue;
 
-      for (const shortPutInst of outerPuts) {
-        const shortPutTicker = bybitChain.tickers.get(shortPutInst.symbol);
-        if (!shortPutTicker) continue;
-        const shortPutBid = shortPutTicker.bid1Price;
-        if (shortPutBid <= 0) continue;
+      const hPolyRem = autoH(tauPolyRem);
 
-        for (const qShortRatio of qShortRatios) {
-          const shortCallQty = bybitQty * qShortRatio;
-          const shortPutQty  = bybitQty * qShortRatio;
+      // Pre-build Poly NO value grid (shared across all qty combos for this pair)
+      const polyUpperNoGrid = new Float64Array(NUM_GRID);
+      const polyLowerNoGrid = new Float64Array(NUM_GRID);
+      for (let i = 0; i < NUM_GRID; i++) {
+        const S = gridLower + gridStep * i;
+        if (tauPolyRem <= 0) {
+          polyUpperNoGrid[i] = S >= K_upper ? 0 : 1;
+          polyLowerNoGrid[i] = S <= K_lower ? 0 : 1;
+        } else {
+          polyUpperNoGrid[i] = 1 - priceHit(S, K_upper, polyUpperIv, tauPolyRem, true,  hPolyRem);
+          polyLowerNoGrid[i] = 1 - priceHit(S, K_lower, polyLowerIv, tauPolyRem, false, hPolyRem);
+        }
+      }
 
-          // Pre-compute fees
-          const longCallFee  = bybitTradingFee(spotPrice, longCallAsk,  bybitQty);
-          const longPutFee   = bybitTradingFee(spotPrice, longPutAsk,   bybitQty);
-          const shortCallFee = bybitTradingFee(spotPrice, shortCallBid, shortCallQty);
-          const shortPutFee  = bybitTradingFee(spotPrice, shortPutBid,  shortPutQty);
+      // Pre-build options intrinsic grid (shared across qty combos)
+      const optionsBaseGrid = new Float64Array(NUM_GRID);
+      for (let i = 0; i < NUM_GRID; i++) {
+        const S = gridLower + gridStep * i;
+        optionsBaseGrid[i] =
+          (Math.max(0, S - kMid)          - longCallAsk) * bybitQty - longCallFee
+        + (Math.max(0, kMid - S)          - longPutAsk)  * bybitQty - longPutFee
+        - Math.max(0, S - shortCallStrike)  // scaled by shortCallQty below
+        - Math.max(0, shortPutStrike - S);  // scaled by shortPutQty below
+        // Note: sign-correct but partial; we add the bid credits + qty in the inner loop
+      }
 
-          for (const qPolyRatio of qPolyRatios) {
-            const polyUpperQty = bybitQty * qPolyRatio;
-            const polyLowerQty = bybitQty * qPolyRatio;
+      // --- Independent qty grid search ---
+      for (const qShortCall of qShortRatios) {
+        const shortCallQty = bybitQty * qShortCall;
+        const shortCallFee = bybitTradingFee(spotPrice, shortCallBid, shortCallQty);
+        const shortCallCredit = shortCallBid * shortCallQty - shortCallFee;
 
-            // Total entry cost (gross, all premiums + fees)
-            const totalEntryCost =
-              bybitQty * longCallAsk + longCallFee
-              + bybitQty * longPutAsk  + longPutFee
-              - shortCallQty * shortCallBid + shortCallFee
-              - shortPutQty  * shortPutBid  + shortPutFee
-              + polyUpperQty * noAskUpper
-              + polyLowerQty * noAskLower;
+        for (const qShortPut of qShortRatios) {
+          const shortPutQty = bybitQty * qShortPut;
+          const shortPutFee = bybitTradingFee(spotPrice, shortPutBid, shortPutQty);
+          const shortPutCredit = shortPutBid * shortPutQty - shortPutFee;
 
-            if (totalEntryCost <= 0) continue;
+          for (const qPolyUp of qPolyRatios) {
+            const polyUpperQty = bybitQty * qPolyUp;
 
-            // Evaluate P&L at 200 grid points AT OPTIONS EXPIRY (tau_bybit=0)
-            const gridPnl = new Float64Array(NUM_GRID);
+            for (const qPolyLo of qPolyRatios) {
+              const polyLowerQty = bybitQty * qPolyLo;
 
-            const hPolyRem = autoH(tauPolyRem);
+              const totalEntryCost =
+                bybitQty * longCallAsk + longCallFee
+                + bybitQty * longPutAsk  + longPutFee
+                - shortCallQty * shortCallBid + shortCallFee
+                - shortPutQty  * shortPutBid  + shortPutFee
+                + polyUpperQty * noAskUpper
+                + polyLowerQty * noAskLower;
 
-            for (let i = 0; i < NUM_GRID; i++) {
-              const S = gridLower + gridStep * i;
+              if (totalEntryCost <= 0) continue;
 
-              // Long straddle (intrinsic at expiry)
-              const longCallPnl = (Math.max(0, S - kMid) - longCallAsk) * bybitQty - longCallFee;
-              const longPutPnl  = (Math.max(0, kMid - S) - longPutAsk)  * bybitQty - longPutFee;
+              // --- Evaluate P&L at each grid point ---
+              let sum3 = 0, count3 = 0;
+              let sum7 = 0, count7 = 0;
+              let sumDip = 0, countDip = 0;
+              let minPnl = Infinity;
 
-              // Short strangle (intrinsic at expiry)
-              const shortCallPnl = (shortCallBid - Math.max(0, S - shortCallInst.strike)) * shortCallQty - shortCallFee;
-              const shortPutPnl  = (shortPutBid  - Math.max(0, shortPutInst.strike - S))  * shortPutQty  - shortPutFee;
+              for (let i = 0; i < NUM_GRID; i++) {
+                const S = gridLower + gridStep * i;
 
-              // Polymarket NO positions (poly still alive at options expiry)
-              let upperNoVal: number;
-              let lowerNoVal: number;
+                const pnl =
+                  (Math.max(0, S - kMid) - longCallAsk) * bybitQty - longCallFee
+                  + (Math.max(0, kMid - S) - longPutAsk)  * bybitQty - longPutFee
+                  + shortCallCredit - Math.max(0, S - shortCallStrike) * shortCallQty
+                  + shortPutCredit  - Math.max(0, shortPutStrike - S)  * shortPutQty
+                  + (polyUpperNoGrid[i] - noAskUpper) * polyUpperQty
+                  + (polyLowerNoGrid[i] - noAskLower) * polyLowerQty;
 
-              if (tauPolyRem <= 0) {
-                // Poly also expired at the same time
-                upperNoVal = S >= K_upper ? 0 : 1;
-                lowerNoVal = S <= K_lower ? 0 : 1;
-              } else {
-                const upperYes = priceHit(S, K_upper, polyUpperIv, tauPolyRem, true,  hPolyRem);
-                const lowerYes = priceHit(S, K_lower, polyLowerIv, tauPolyRem, false, hPolyRem);
-                upperNoVal = 1 - upperYes;
-                lowerNoVal = 1 - lowerYes;
+                if (pnl < minPnl) minPnl = pnl;
+
+                const pct = Math.abs(S / spotPrice - 1);
+                if (pct < 0.01)                 { sumDip += pnl; countDip++; }
+                if (pct >= 0.01 && pct <= 0.03) { sum3   += pnl; count3++;   }
+                if (pct >= 0.01 && pct <= 0.07) { sum7   += pnl; count7++;   }
               }
 
-              const polyUpperPnl = (upperNoVal - noAskUpper) * polyUpperQty;
-              const polyLowerPnl = (lowerNoVal - noAskLower) * polyLowerQty;
+              const avgPnl3pct = count3   > 0 ? sum3   / count3   : 0;
+              const avgPnl7pct = count7   > 0 ? sum7   / count7   : 0;
+              const centralDip = countDip > 0 ? sumDip / countDip : 0;
+              const maxLoss    = minPnl;
 
-              gridPnl[i] = longCallPnl + longPutPnl + shortCallPnl + shortPutPnl + polyUpperPnl + polyLowerPnl;
+              if (avgPnl7pct <= 0) continue;
+
+              results.push({
+                longStrike: kMid,
+                shortCallStrike,
+                shortPutStrike,
+                longCallInstrument:  longCallInst,
+                longPutInstrument:   longPutInst,
+                shortCallInstrument: shortCallInst,
+                shortPutInstrument:  shortPutInst,
+                polyUpperMarket:     polyUpper,
+                polyLowerMarket:     polyLower,
+                longQty:      bybitQty,
+                shortCallQty,
+                shortPutQty,
+                polyUpperQty,
+                polyLowerQty,
+                longCallEntry:    longCallAsk,
+                longPutEntry:     longPutAsk,
+                shortCallEntry:   shortCallBid,
+                shortPutEntry:    shortPutBid,
+                polyUpperNoEntry: noAskUpper,
+                polyLowerNoEntry: noAskLower,
+                polyUpperIv,
+                polyLowerIv,
+                tauPolyRem,
+                avgPnl3pct,
+                avgPnl7pct,
+                centralDip,
+                maxLoss,
+                totalEntryCost,
+              });
             }
-
-            // Score: avg P&L in ±1–3% and ±1–7% bands
-            let sum3 = 0, count3 = 0;
-            let sum7 = 0, count7 = 0;
-            let minPnl = Infinity;
-
-            for (let i = 0; i < NUM_GRID; i++) {
-              const S = gridLower + gridStep * i;
-              const pct = Math.abs(S / spotPrice - 1);
-              const pnl = gridPnl[i];
-
-              if (pnl < minPnl) minPnl = pnl;
-
-              if (pct >= 0.01 && pct <= 0.03) { sum3 += pnl; count3++; }
-              if (pct >= 0.01 && pct <= 0.07) { sum7 += pnl; count7++; }
-            }
-
-            const avgPnl3pct = count3 > 0 ? sum3 / count3 : 0;
-            const avgPnl7pct = count7 > 0 ? sum7 / count7 : 0;
-            const maxLoss = minPnl;
-
-            // Keep results with positive avg P&L in ±7% band
-            if (avgPnl7pct <= 0) continue;
-
-            results.push({
-              longStrike: kMid,
-              shortCallStrike: shortCallInst.strike,
-              shortPutStrike: shortPutInst.strike,
-              longCallInstrument: longCallInst,
-              longPutInstrument: longPutInst,
-              shortCallInstrument: shortCallInst,
-              shortPutInstrument: shortPutInst,
-              polyUpperMarket,
-              polyLowerMarket,
-              longQty: bybitQty,
-              shortCallQty,
-              shortPutQty,
-              polyUpperQty,
-              polyLowerQty,
-              longCallEntry: longCallAsk,
-              longPutEntry: longPutAsk,
-              shortCallEntry: shortCallBid,
-              shortPutEntry: shortPutBid,
-              polyUpperNoEntry: noAskUpper,
-              polyLowerNoEntry: noAskLower,
-              polyUpperIv,
-              polyLowerIv,
-              tauPolyRem,
-              avgPnl3pct,
-              avgPnl7pct,
-              maxLoss,
-              totalEntryCost,
-            });
           }
         }
       }
     }
   }
 
-  // Return top 20 sorted by avgPnl7pct descending
+  // Return top 30 sorted by avgPnl7pct descending
   return results
     .sort((a, b) => b.avgPnl7pct - a.avgPnl7pct)
-    .slice(0, 20);
+    .slice(0, 30);
 }

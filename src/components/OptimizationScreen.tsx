@@ -20,8 +20,6 @@ interface OptimizationScreenProps {
   polyEvent: PolymarketEvent | null;
   polyMarkets: ParsedMarket[];
   crypto: CryptoOption | null;
-  upperMarket: ParsedMarket | null;
-  lowerMarket: ParsedMarket | null;
   spotPrice: number;
   bybitChain: BybitChainType | null;
   polyUrl?: string;
@@ -153,7 +151,10 @@ function VizCard({ match, spotPrice, smile, bybitSmile, polyExpiryTs, cryptoSymb
         <Box sx={{ mt: 1.5, pt: 1.5, borderTop: '1px solid rgba(139, 157, 195, 0.1)', display: 'flex', gap: 3, flexWrap: 'wrap' }}>
           <Typography variant="body2" sx={{ color: '#00D1FF', fontWeight: 600 }}>Net entry: ${totalEntryCost.toFixed(2)}</Typography>
           <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600 }}>
-            Avg &plusmn;3%: +${match.avgPnl3pct.toFixed(2)} | &plusmn;7%: +${match.avgPnl7pct.toFixed(2)}
+            Avg &plusmn;7%: +${match.avgPnl7pct.toFixed(2)} | &plusmn;3%: +${match.avgPnl3pct.toFixed(2)}
+          </Typography>
+          <Typography variant="body2" sx={{ color: '#FFB020', fontWeight: 600 }}>
+            Dip@0: ${match.centralDip.toFixed(2)}
           </Typography>
           <Typography variant="body2" sx={{ color: match.maxLoss < 0 ? '#EF4444' : '#22C55E', fontWeight: 600 }}>
             Max loss: ${match.maxLoss.toFixed(2)}
@@ -218,7 +219,7 @@ function VizCard({ match, spotPrice, smile, bybitSmile, polyExpiryTs, cryptoSymb
   );
 }
 
-export function OptimizationScreen({ polyEvent, polyMarkets, crypto, upperMarket, lowerMarket, spotPrice, bybitChain, polyUrl, onBack }: OptimizationScreenProps) {
+export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, bybitChain, polyUrl, onBack }: OptimizationScreenProps) {
   const muiTheme = useTheme();
   const isDark = muiTheme.palette.mode === 'dark';
   const [vizMatch, setVizMatch] = useState<ExtendedMatch | null>(null);
@@ -290,9 +291,9 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, upperMarket
   const nowSec = useMemo(() => Math.floor(Date.now() / 1000), []);
 
   const optResults = useMemo(() => {
-    if (!upperMarket || !lowerMarket || !bybitChain || spotPrice <= 0) return [];
-    return runExtendedOptimization(upperMarket, lowerMarket, spotPrice, nowSec, bybitChain, bybitQty);
-  }, [upperMarket, lowerMarket, spotPrice, bybitChain, nowSec, bybitQty]);
+    if (!polyMarkets.length || !bybitChain || spotPrice <= 0) return [];
+    return runExtendedOptimization(polyMarkets, spotPrice, nowSec, bybitChain, bybitQty);
+  }, [polyMarkets, spotPrice, bybitChain, nowSec, bybitQty]);
 
   const polyExpiryTs = polyEvent?.endDate ?? 0;
   const polyTauNow = useMemo(() => Math.max((polyExpiryTs - nowSec) / (365.25 * 24 * 3600), 0), [polyExpiryTs, nowSec]);
@@ -329,7 +330,8 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, upperMarket
     return d > 0 ? `${d}d ${h}h` : `${h}h`;
   };
   const handleViz = useCallback((m: ExtendedMatch) => setVizMatch(prev => prev === m ? null : m), []);
-  const isLoading = (!!upperMarket && !!lowerMarket && !!bybitChain) && optResults.length === 0;
+  const hasInputs = polyMarkets.length > 0 && !!bybitChain && spotPrice > 0;
+  const isLoading = hasInputs && optResults.length === 0;
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', p: 2, gap: 1.5 }}>
@@ -348,8 +350,7 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, upperMarket
             {ttxSec > 0 && <Chip label={`TTX: ${formatTTX(ttxSec)}`} size="small" sx={{ bgcolor: 'rgba(139, 157, 195, 0.1)', color: '#8B9DC3', border: '1px solid rgba(139, 157, 195, 0.2)' }} />}
             {spotPrice > 0 && <Chip label={`Spot: $${spotPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} size="small" sx={{ bgcolor: 'rgba(34, 197, 94, 0.1)', color: '#22C55E', border: '1px solid rgba(34, 197, 94, 0.3)' }} />}
             {bybitChain && <Chip label={`Bybit: ${bybitChain.expiryLabel} ${fmtTimeUTC1(bybitChain.expiryTimestamp)}`} size="small" sx={{ bgcolor: 'rgba(255, 140, 0, 0.1)', color: '#FF8C00', border: '1px solid rgba(255, 140, 0, 0.3)' }} />}
-            {upperMarket && <Chip label={`\u2191 $${upperMarket.strikePrice.toLocaleString()}`} size="small" sx={{ bgcolor: 'rgba(74, 144, 217, 0.1)', color: '#4A90D9', border: '1px solid rgba(74, 144, 217, 0.3)' }} />}
-            {lowerMarket && <Chip label={`\u2193 $${lowerMarket.strikePrice.toLocaleString()}`} size="small" sx={{ bgcolor: 'rgba(74, 144, 217, 0.1)', color: '#4A90D9', border: '1px solid rgba(74, 144, 217, 0.3)' }} />}
+            {polyMarkets.length > 0 && <Chip label={`${polyMarkets.filter(m => m.strikePrice > spotPrice).length}↑ / ${polyMarkets.filter(m => m.strikePrice < spotPrice).length}↓ strikes`} size="small" sx={{ bgcolor: 'rgba(74, 144, 217, 0.1)', color: '#4A90D9', border: '1px solid rgba(74, 144, 217, 0.3)' }} />}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, border: '1px solid rgba(255, 140, 0, 0.3)', borderRadius: '16px', px: 1, py: '3px', bgcolor: 'rgba(255, 140, 0, 0.06)' }}>
               <Typography variant="caption" sx={{ color: '#FF8C00', fontSize: '0.72rem', userSelect: 'none' }}>Bybit qty:</Typography>
               <Box component="input" type="number" value={bybitQtyInput}
@@ -378,11 +379,11 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, upperMarket
             <TableHead>
               <TableRow sx={{ bgcolor: isDark ? 'rgba(19, 26, 42, 0.5)' : 'rgba(0,0,0,0.03)' }}>
                 <TableCell sx={{ fontWeight: 700, color: '#8B9DC3', width: 36 }}>#</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#FF8C00' }}>Long Strike (straddle)</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#EF4444' }}>Short Strikes (strangle)</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#8B9DC3' }}>Quantities</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#22C55E' }}>Avg &plusmn;3%</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#4A90D9' }}>Poly Pair (↑/↓)</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#EF4444' }}>Bybit Strangle</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#8B9DC3' }}>Qty SC/SP/PU/PL</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: '#22C55E' }}>Avg &plusmn;7%</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#FFB020' }}>Dip@0</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: '#EF4444' }}>Max Loss</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: '#8B9DC3' }}></TableCell>
               </TableRow>
@@ -391,26 +392,31 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, upperMarket
               {optResults.map((result, idx) => {
                 const sel = vizMatch === result;
                 const p7 = result.totalEntryCost > 0 ? (result.avgPnl7pct / result.totalEntryCost) * 100 : 0;
-                const p3 = result.totalEntryCost > 0 ? (result.avgPnl3pct / result.totalEntryCost) * 100 : 0;
                 return (
                   <TableRow key={idx} sx={{ '&:hover': { bgcolor: isDark ? 'rgba(139, 157, 195, 0.03)' : 'rgba(0,0,0,0.02)' }, bgcolor: sel ? 'rgba(0, 209, 255, 0.04)' : 'transparent' }}>
                     <TableCell sx={{ color: '#8B9DC3', fontWeight: 600, fontFamily: 'monospace' }}>{idx + 1}</TableCell>
-                    <TableCell><Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600 }}>${result.longStrike.toLocaleString()} C+P</Typography></TableCell>
+                    <TableCell>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#4A90D9' }}>↑ ${result.polyUpperMarket.strikePrice.toLocaleString()}</Typography>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#4A90D9' }}>↓ ${result.polyLowerMarket.strikePrice.toLocaleString()}</Typography>
+                    </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#EF4444' }}>${result.shortCallStrike.toLocaleString()} C</Typography>
                       <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#EF4444' }}>${result.shortPutStrike.toLocaleString()} P</Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'text.secondary' }}>Long &times;{result.longQty} / Short &times;{result.shortCallQty.toFixed(2)}</Typography>
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#4A90D9' }}>Poly &times;{result.polyUpperQty.toFixed(2)}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600, fontFamily: 'monospace', fontSize: '0.78rem' }}>+${result.avgPnl3pct.toFixed(2)}</Typography>
-                      <Typography variant="caption" sx={{ color: '#22C55E', opacity: 0.7 }}>+{p3.toFixed(1)}%</Typography>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'text.secondary' }}>
+                        SC×{result.shortCallQty.toFixed(2)} SP×{result.shortPutQty.toFixed(2)}
+                      </Typography>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#4A90D9' }}>
+                        PU×{result.polyUpperQty.toFixed(2)} PL×{result.polyLowerQty.toFixed(2)}
+                      </Typography>
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 700, fontFamily: 'monospace', fontSize: '0.78rem' }}>+${result.avgPnl7pct.toFixed(2)}</Typography>
                       <Typography variant="caption" sx={{ color: '#22C55E', opacity: 0.7 }}>+{p7.toFixed(1)}%</Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" sx={{ color: result.centralDip < -0.01 ? '#FFB020' : '#22C55E', fontFamily: 'monospace', fontSize: '0.78rem' }}>${result.centralDip.toFixed(2)}</Typography>
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ color: result.maxLoss < -0.01 ? '#EF4444' : '#22C55E', fontFamily: 'monospace', fontSize: '0.78rem' }}>${result.maxLoss.toFixed(2)}</Typography>

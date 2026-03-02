@@ -184,6 +184,7 @@ export interface ExtendedMatch {
   tauPolyRem: number;           // poly remaining time at options expiry (years)
   avgPnl3pct: number;           // avg P&L in ±1–3% band around spot (absolute $)
   avgPnl7pct: number;           // avg P&L in ±1–7% band
+  centralDip: number;           // avg P&L within ±1% of spot (the W-shape dip, typically negative)
   maxLoss: number;              // worst P&L in full ±25% grid (absolute $, negative)
   totalEntryCost: number;       // gross cost ($) — denominator for % P&L display
 }
