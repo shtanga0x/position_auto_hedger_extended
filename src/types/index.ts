@@ -185,6 +185,8 @@ export interface ExtendedMatch {
   avgPnl1pct: number;           // avg NOW P&L at the two barrier strikes ($ — target ≈ -targetLoss% × cost)
   avgPnl7pct: number;           // avg EXPIRY P&L at the two barrier strikes ($)
   centralDip: number;           // NOW P&L at spot ($)
-  maxLoss: number;              // worst EXPIRY P&L in full ±25% grid ($, negative)
+  maxLossNow: number;           // worst NOW P&L in ±25% grid (%, negative)
+  avgProfitExpiryPct: number;   // average of positive EXPIRY P&L values in [K_lower,K_upper] (% of cost)
+  avgLossExpiryPct: number;     // average of negative EXPIRY P&L values in [K_lower,K_upper] (% of cost, negative)
   totalEntryCost: number;       // net premium paid ($) — options + poly cost
 }

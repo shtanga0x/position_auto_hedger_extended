@@ -246,12 +246,27 @@ export function runExtendedOptimization(
                         + (optsExpiryAtLower + polyQty * polyExpiryAtLower)) / 2;
       const centralDip = optsNow(spotPrice) + polyQty * polyUnitNow(spotPrice);
 
-      let maxLossExpiry = 0;
+      // Max loss on NOW curve in ±25% grid
+      let maxLossNowAbs = 0;
       for (let i = 0; i < SCORE_N; i++) {
         const S = scoreGrid[i];
-        const pnl = optsExpiry(S) + polyQty * polyUnitExpiry(S);
-        if (pnl < maxLossExpiry) maxLossExpiry = pnl;
+        const pnl = optsNow(S) + polyQty * polyUnitNow(S);
+        if (pnl < maxLossNowAbs) maxLossNowAbs = pnl;
       }
+      const maxLossNow = (maxLossNowAbs / totalEntryCost) * 100;
+
+      // Avg profit / avg loss on EXPIRY curve in [K_lower, K_upper]
+      const EXPIRY_N = 100;
+      const exStep = (K_upper - K_lower) / (EXPIRY_N - 1);
+      let sumProfit = 0, countProfit = 0, sumLoss = 0, countLoss = 0;
+      for (let i = 0; i < EXPIRY_N; i++) {
+        const S = K_lower + exStep * i;
+        const pnl = optsExpiry(S) + polyQty * polyUnitExpiry(S);
+        if (pnl >= 0) { sumProfit += pnl; countProfit++; }
+        else           { sumLoss   += pnl; countLoss++;   }
+      }
+      const avgProfitExpiryPct = countProfit > 0 ? (sumProfit / countProfit / totalEntryCost) * 100 : 0;
+      const avgLossExpiryPct   = countLoss   > 0 ? (sumLoss   / countLoss   / totalEntryCost) * 100 : 0;
 
       results.push({
         longStrike:          kMid,
@@ -280,7 +295,9 @@ export function runExtendedOptimization(
         avgPnl1pct,
         avgPnl7pct,
         centralDip,
-        maxLoss:        maxLossExpiry,
+        maxLossNow,
+        avgProfitExpiryPct,
+        avgLossExpiryPct,
         totalEntryCost,
       });
     }

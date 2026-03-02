@@ -150,11 +150,14 @@ function VizCard({ match, spotPrice, smile, bybitSmile, polyExpiryTs, cryptoSymb
         </Box>
         <Box sx={{ mt: 1.5, pt: 1.5, borderTop: '1px solid rgba(139, 157, 195, 0.1)', display: 'flex', gap: 3, flexWrap: 'wrap' }}>
           <Typography variant="body2" sx={{ color: '#00D1FF', fontWeight: 600 }}>Net entry: ${totalEntryCost.toFixed(2)}</Typography>
-          <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600 }}>
-            NOW @ barriers: {match.avgPnl1pct >= 0 ? '+' : ''}{match.avgPnl1pct.toFixed(2)} &nbsp;|&nbsp; EXPIRY @ barriers: {match.avgPnl7pct >= 0 ? '+' : ''}{match.avgPnl7pct.toFixed(2)}
+          <Typography variant="body2" sx={{ color: '#EF4444', fontWeight: 600 }}>
+            Max loss (Now): {match.maxLossNow.toFixed(1)}%
           </Typography>
-          <Typography variant="body2" sx={{ color: match.maxLoss < 0 ? '#EF4444' : '#22C55E', fontWeight: 600 }}>
-            Max loss: ${match.maxLoss.toFixed(2)}
+          <Typography variant="body2" sx={{ color: '#22C55E', fontWeight: 600 }}>
+            Avg profit (Expiry): {match.avgProfitExpiryPct > 0 ? '+' : ''}{match.avgProfitExpiryPct.toFixed(1)}%
+          </Typography>
+          <Typography variant="body2" sx={{ color: '#EF4444', fontWeight: 600 }}>
+            Avg loss (Expiry): {match.avgLossExpiryPct.toFixed(1)}%
           </Typography>
           {polyUrl && (
             <Typography component="a" href={`${polyUrl}?via=delta`} target="_blank" rel="noopener noreferrer"
@@ -455,27 +458,28 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
                 <TableCell sx={{ fontWeight: 700, color: '#8B9DC3', width: 36 }}>#</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: '#4A90D9' }}>Poly Pair (↑/↓)</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: '#FF8C00' }}>Bybit Long / Short</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#4A90D9' }}>Poly qty</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#EF4444' }}>NOW @ barriers</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#A78BFA' }}>EXPIRY @ barriers</TableCell>
-                <TableCell sx={{ fontWeight: 700, color: '#EF4444' }}>Max Loss</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#EF4444' }}>Max Loss (Now)</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#22C55E' }}>Avg Profit (Expiry)</TableCell>
+                <TableCell sx={{ fontWeight: 700, color: '#EF4444' }}>Avg Loss (Expiry)</TableCell>
                 <TableCell sx={{ fontWeight: 700, color: '#8B9DC3' }}></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {optResults.map((result, idx) => {
                 const sel = vizMatch === result;
-                const nowPct  = result.totalEntryCost > 0 ? (result.avgPnl1pct / result.totalEntryCost) * 100 : 0;
-                const exPct   = result.totalEntryCost > 0 ? (result.avgPnl7pct / result.totalEntryCost) * 100 : 0;
-                // Color: green if within ±2pp of target, red otherwise
-                const nowColor = Math.abs(nowPct + targetLossFrac * 100) <= 2 ? '#22C55E' : '#EF4444';
-                const exColor  = result.avgPnl7pct >= 0 ? '#22C55E' : result.avgPnl7pct > -result.totalEntryCost * 0.10 ? '#FFB020' : '#EF4444';
                 return (
                   <TableRow key={idx} sx={{ '&:hover': { bgcolor: isDark ? 'rgba(139, 157, 195, 0.03)' : 'rgba(0,0,0,0.02)' }, bgcolor: sel ? 'rgba(0, 209, 255, 0.04)' : 'transparent' }}>
                     <TableCell sx={{ color: '#8B9DC3', fontWeight: 600, fontFamily: 'monospace' }}>{idx + 1}</TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#4A90D9' }}>↑ ${result.polyUpperMarket.strikePrice.toLocaleString()}</Typography>
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#4A90D9' }}>↓ ${result.polyLowerMarket.strikePrice.toLocaleString()}</Typography>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#4A90D9' }}>
+                        ↑ ${result.polyUpperMarket.strikePrice.toLocaleString()}
+                      </Typography>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#4A90D9' }}>
+                        ↓ ${result.polyLowerMarket.strikePrice.toLocaleString()}
+                      </Typography>
+                      <Typography variant="caption" sx={{ fontFamily: 'monospace', color: '#8B9DC3' }}>
+                        ({result.polyUpperQty.toFixed(1)} shares)
+                      </Typography>
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#FF8C00' }}>
@@ -486,27 +490,19 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.78rem', color: '#4A90D9', fontWeight: 600 }}>
-                        {result.polyUpperQty.toFixed(1)} each
-                      </Typography>
-                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                        NO×2 pos
+                      <Typography variant="body2" sx={{ color: result.maxLossNow < -5 ? '#EF4444' : '#FFB020', fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 600 }}>
+                        {result.maxLossNow.toFixed(1)}%
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ color: nowColor, fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 600 }}>
-                        {result.avgPnl1pct >= 0 ? '+' : ''}{result.avgPnl1pct.toFixed(2)}
+                      <Typography variant="body2" sx={{ color: '#22C55E', fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 600 }}>
+                        {result.avgProfitExpiryPct > 0 ? '+' : ''}{result.avgProfitExpiryPct.toFixed(1)}%
                       </Typography>
-                      <Typography variant="caption" sx={{ color: nowColor, opacity: 0.7 }}>{nowPct.toFixed(1)}% of cost</Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ color: exColor, fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 600 }}>
-                        {result.avgPnl7pct >= 0 ? '+' : ''}{result.avgPnl7pct.toFixed(2)}
+                      <Typography variant="body2" sx={{ color: '#EF4444', fontFamily: 'monospace', fontSize: '0.78rem', fontWeight: 600 }}>
+                        {result.avgLossExpiryPct.toFixed(1)}%
                       </Typography>
-                      <Typography variant="caption" sx={{ color: exColor, opacity: 0.7 }}>{exPct.toFixed(1)}% of cost</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" sx={{ color: result.maxLoss < -0.01 ? '#EF4444' : '#22C55E', fontFamily: 'monospace', fontSize: '0.78rem' }}>{result.maxLoss.toFixed(2)}</Typography>
                     </TableCell>
                     <TableCell>
                       <IconButton size="small" onClick={() => handleViz(result)} sx={{ p: 0.5, color: sel ? '#00D1FF' : 'text.secondary', '&:hover': { color: '#00D1FF' } }}>
