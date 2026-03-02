@@ -187,5 +187,4 @@ export interface ExtendedMatch {
   centralDip: number;           // NOW P&L at spot ($)
   maxLoss: number;              // worst EXPIRY P&L in full ±25% grid ($, negative)
   totalEntryCost: number;       // net premium paid ($) — options + poly cost
-  optionsCurvature: number;     // options-only NOW peak-to-trough in [K_lower,K_upper] (lower = flatter)
 }

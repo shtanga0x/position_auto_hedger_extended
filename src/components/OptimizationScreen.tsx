@@ -222,7 +222,6 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
   const [vizMatch, setVizMatch] = useState<ExtendedMatch | null>(null);
   const [bybitQtyInput, setBybitQtyInput] = useState('0.01');
   const [targetLossInput, setTargetLossInput] = useState('5');
-  const [optimizeFor, setOptimizeFor] = useState<'now' | 'expiry'>('now');
   const snapshotRef = useRef<HTMLDivElement>(null);
 
   const fmtTimeUTC1 = (ms: number) => {
@@ -296,8 +295,8 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
 
   const optResults = useMemo(() => {
     if (!polyMarkets.length || !bybitChain || spotPrice <= 0) return [];
-    return runExtendedOptimization(polyMarkets, spotPrice, nowSec, bybitChain, bybitQty, targetLossFrac, optimizeFor);
-  }, [polyMarkets, spotPrice, bybitChain, nowSec, bybitQty, targetLossFrac, optimizeFor]);
+    return runExtendedOptimization(polyMarkets, spotPrice, nowSec, bybitChain, bybitQty, targetLossFrac);
+  }, [polyMarkets, spotPrice, bybitChain, nowSec, bybitQty, targetLossFrac]);
 
   const polyExpiryTs = polyEvent?.endDate ?? 0;
   const polyTauNow = useMemo(() => Math.max((polyExpiryTs - nowSec) / (365.25 * 24 * 3600), 0), [polyExpiryTs, nowSec]);
@@ -373,14 +372,6 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
                 sx={{ width: 36, bgcolor: 'transparent', border: 'none', color: '#EF4444', fontSize: '0.75rem', fontWeight: 700, outline: 'none', fontFamily: 'monospace', '&::-webkit-inner-spin-button': { WebkitAppearance: 'none' }, '&::-webkit-outer-spin-button': { WebkitAppearance: 'none' } }}
               />
               <Typography variant="caption" sx={{ color: '#EF4444', fontSize: '0.72rem', userSelect: 'none' }}>%</Typography>
-            </Box>
-            {/* Optimize for NOW or EXPIRY */}
-            <Box
-              onClick={() => { setOptimizeFor(v => v === 'now' ? 'expiry' : 'now'); setVizMatch(null); }}
-              sx={{ display: 'flex', alignItems: 'center', gap: 0.5, border: `1px solid ${optimizeFor === 'now' ? 'rgba(0,209,255,0.4)' : 'rgba(167,139,250,0.4)'}`, borderRadius: '16px', px: 1.2, py: '3px', bgcolor: optimizeFor === 'now' ? 'rgba(0,209,255,0.08)' : 'rgba(167,139,250,0.08)', cursor: 'pointer', userSelect: 'none' }}>
-              <Typography variant="caption" sx={{ color: optimizeFor === 'now' ? '#00D1FF' : '#A78BFA', fontSize: '0.72rem', fontWeight: 700 }}>
-                {optimizeFor === 'now' ? 'NOW curve' : 'EXPIRY curve'}
-              </Typography>
             </Box>
           </Box>
         </Box>
