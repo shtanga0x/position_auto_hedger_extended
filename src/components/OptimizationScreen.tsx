@@ -12,7 +12,7 @@ import type {
   PolymarketPosition, BybitPosition, ExtendedMatch,
 } from '../types';
 import { solveImpliedVol, autoH, type SmilePoint } from '../pricing/engine';
-import { runExtendedOptimization } from '../optimization/extendedOptimizer';
+import { runExtendedOptimization, diagnoseExtendedOptimization, type DiagnosticsReport } from '../optimization/extendedOptimizer';
 import { ProjectionChart } from './ProjectionChart';
 import { usePortfolioCurves } from '../hooks/usePortfolioCurves';
 
@@ -298,6 +298,11 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
     return runExtendedOptimization(polyMarkets, spotPrice, nowSec, bybitChain, bybitQty, targetLossFrac);
   }, [polyMarkets, spotPrice, bybitChain, nowSec, bybitQty, targetLossFrac]);
 
+  const diagnostics = useMemo<DiagnosticsReport | null>(() => {
+    if (optResults.length > 0 || !polyMarkets.length || !bybitChain || spotPrice <= 0) return null;
+    return diagnoseExtendedOptimization(polyMarkets, spotPrice, nowSec, bybitChain, bybitQty, targetLossFrac);
+  }, [optResults.length, polyMarkets, spotPrice, bybitChain, nowSec, bybitQty, targetLossFrac]);
+
   const polyExpiryTs = polyEvent?.endDate ?? 0;
   const polyTauNow = useMemo(() => Math.max((polyExpiryTs - nowSec) / (365.25 * 24 * 3600), 0), [polyExpiryTs, nowSec]);
 
@@ -386,15 +391,64 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
           <Typography variant="body2" color="text.secondary">Waiting for market data…</Typography>
         </Box>
       ) : optResults.length === 0 ? (
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 1 }}>
-          <Typography variant="body2" color="text.secondary">
-            No valid combinations found for this event + expiry.
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', pt: 2 }}>
+            No valid combinations found — diagnostics below.
           </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ opacity: 0.6, textAlign: 'center', maxWidth: 420 }}>
-            Possible reasons: no Poly strike pairs within 30% symmetry of spot; Bybit expiry
-            already passed; no Bybit strikes near the symmetric target; options P&L couldn't
-            be made flat with available strikes. Try a different Bybit expiry.
-          </Typography>
+          {diagnostics && (
+            <Paper elevation={0} sx={{ p: 2, border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+              {/* Bybit structure */}
+              <Typography variant="caption" sx={{ color: '#FF8C00', fontWeight: 700, display: 'block', mb: 0.5 }}>
+                BYBIT STRUCTURE {diagnostics.bybitBlockedAt ? '✗ BLOCKED' : '✓ OK'}
+              </Typography>
+              <Box component="pre" sx={{ m: 0, fontSize: '0.72rem', color: diagnostics.bybitBlockedAt ? '#EF4444' : 'text.secondary', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+{`  Bybit TTX:       ${diagnostics.tauBybitDays.toFixed(1)} days
+  Dual strikes:    ${diagnostics.dualStrikesCount}
+  kMid:            ${diagnostics.kMid != null ? `$${diagnostics.kMid.toLocaleString()}` : '—'}
+  Long call ask:   ${diagnostics.longCallAsk > 0 ? `$${diagnostics.longCallAsk.toFixed(2)}` : '—'}
+  Long put ask:    ${diagnostics.longPutAsk > 0  ? `$${diagnostics.longPutAsk.toFixed(2)}`  : '—'}
+  Outer put pool:  ${diagnostics.outerPutPoolSize} candidates with bid > 0
+  Outer call pool: ${diagnostics.outerCallPoolSize} candidates with bid > 0
+  Outer put:       ${diagnostics.outerPutStrike != null ? `$${diagnostics.outerPutStrike.toLocaleString()}  bid $${diagnostics.shortPutBid.toFixed(2)}` : '—'}
+  Outer call tgt:  ${diagnostics.outerCallTarget != null ? `$${diagnostics.outerCallTarget.toLocaleString()} → nearest $${diagnostics.outerCallStrike?.toLocaleString()}  bid $${diagnostics.shortCallBid.toFixed(2)}` : '—'}
+  Options debit:   ${diagnostics.optionsNetDebit != null ? `$${diagnostics.optionsNetDebit.toFixed(4)}` : '—'}${diagnostics.bybitBlockedAt ? `\n\n  ✗ ${diagnostics.bybitBlockedAt}` : ''}`}
+              </Box>
+
+              {/* Poly pairs */}
+              {!diagnostics.bybitBlockedAt && (
+                <>
+                  <Typography variant="caption" sx={{ color: '#4A90D9', fontWeight: 700, display: 'block', mt: 1.5, mb: 0.5 }}>
+                    POLYMARKET PAIRS
+                  </Typography>
+                  <Box component="pre" sx={{ m: 0, fontSize: '0.72rem', color: 'text.secondary', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+{`  Strikes above spot: ${diagnostics.polyUpperCount}
+  Strikes below spot: ${diagnostics.polyLowerCount}
+  Total pairs checked: ${diagnostics.totalPairsChecked}
+  Passed: ${diagnostics.passedCount}`}
+                  </Box>
+                  {diagnostics.pairFailures.length > 0 && (
+                    <>
+                      <Typography variant="caption" sx={{ color: '#EF4444', fontWeight: 700, display: 'block', mt: 1, mb: 0.5 }}>
+                        FAILURE REASONS
+                      </Typography>
+                      {diagnostics.pairFailures.map(({ reason, count, examples }) => (
+                        <Box key={reason} sx={{ mb: 0.5 }}>
+                          <Typography variant="caption" sx={{ color: '#EF4444', display: 'block', fontSize: '0.72rem' }}>
+                            ✗ {reason} — {count} pair{count > 1 ? 's' : ''}
+                          </Typography>
+                          {examples.map(ex => (
+                            <Typography key={ex} variant="caption" sx={{ color: 'text.secondary', display: 'block', fontSize: '0.68rem', pl: 2, opacity: 0.7 }}>
+                              e.g. {ex}
+                            </Typography>
+                          ))}
+                        </Box>
+                      ))}
+                    </>
+                  )}
+                </>
+              )}
+            </Paper>
+          )}
         </Box>
       ) : (
         <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid rgba(139, 157, 195, 0.15)', borderRadius: '8px' }}>

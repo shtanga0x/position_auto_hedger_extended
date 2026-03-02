@@ -1,4 +1,28 @@
 import type { ParsedMarket, BybitOptionChain, ExtendedMatch } from '../types';
+
+export interface DiagnosticsReport {
+  // Bybit structure (computed once, shared across all poly pairs)
+  bybitBlockedAt: string | null;  // null = structure OK
+  tauBybitDays: number;
+  dualStrikesCount: number;
+  kMid: number | null;
+  longCallAsk: number;
+  longPutAsk: number;
+  outerPutPoolSize: number;
+  outerCallPoolSize: number;
+  outerPutStrike: number | null;
+  outerCallTarget: number | null;
+  outerCallStrike: number | null;
+  shortPutBid: number;
+  shortCallBid: number;
+  optionsNetDebit: number | null;
+  // Polymarket pairs
+  polyUpperCount: number;
+  polyLowerCount: number;
+  totalPairsChecked: number;
+  pairFailures: { reason: string; count: number; examples: string[] }[];
+  passedCount: number;
+}
 import {
   priceHit, bybitTradingFee, solveImpliedVol, autoH,
   bsCallPrice, bsPutPrice,
@@ -305,4 +329,217 @@ export function runExtendedOptimization(
     const errB = Math.abs(b.avgPnl1pct / b.totalEntryCost + targetLossFrac);
     return errA - errB;
   });
+}
+
+/** Diagnostic version — mirrors the optimizer logic and reports the first failure at each step. */
+export function diagnoseExtendedOptimization(
+  polyMarkets: ParsedMarket[],
+  spotPrice: number,
+  nowSec: number,
+  bybitChain: BybitOptionChain,
+  bybitQty: number = 0.01,
+  targetLossFrac: number = 0.05,
+): DiagnosticsReport {
+  const rep: DiagnosticsReport = {
+    bybitBlockedAt: null,
+    tauBybitDays: 0,
+    dualStrikesCount: 0,
+    kMid: null,
+    longCallAsk: 0, longPutAsk: 0,
+    outerPutPoolSize: 0, outerCallPoolSize: 0,
+    outerPutStrike: null, outerCallTarget: null, outerCallStrike: null,
+    shortPutBid: 0, shortCallBid: 0,
+    optionsNetDebit: null,
+    polyUpperCount: 0, polyLowerCount: 0,
+    totalPairsChecked: 0,
+    pairFailures: [],
+    passedCount: 0,
+  };
+
+  const calls = bybitChain.instruments.filter(i => i.optionsType === 'Call');
+  const puts  = bybitChain.instruments.filter(i => i.optionsType === 'Put');
+  const callStrikeSet = new Set(calls.map(c => c.strike));
+  const putStrikeSet  = new Set(puts.map(p => p.strike));
+  const dualStrikes   = [...callStrikeSet].filter(k => putStrikeSet.has(k)).sort((a, b) => a - b);
+
+  const tauBybit = Math.max(((bybitChain.expiryTimestamp / 1000) - nowSec) / YEAR_SEC, 0);
+  rep.tauBybitDays = tauBybit * 365.25;
+  rep.dualStrikesCount = dualStrikes.length;
+
+  if (dualStrikes.length === 0) { rep.bybitBlockedAt = 'No dual strikes (both C+P at same strike)'; return rep; }
+  if (tauBybit <= 0) { rep.bybitBlockedAt = 'Bybit expiry already passed (tauBybit = 0)'; return rep; }
+
+  const getTicker = (sym: string) => bybitChain.tickers.get(sym);
+  const getAsk    = (sym: string) => getTicker(sym)?.ask1Price ?? 0;
+  const getBid    = (sym: string) => getTicker(sym)?.bid1Price ?? 0;
+
+  const kMid = dualStrikes.reduce((best, k) =>
+    Math.abs(k - spotPrice) < Math.abs(best - spotPrice) ? k : best, dualStrikes[0]);
+  rep.kMid = kMid;
+
+  const lcInst = calls.find(c => c.strike === kMid);
+  const lpInst = puts.find(p => p.strike === kMid);
+  if (!lcInst || !lpInst) { rep.bybitBlockedAt = `No C+P instruments found at kMid=${kMid}`; return rep; }
+
+  rep.longCallAsk = getAsk(lcInst.symbol);
+  rep.longPutAsk  = getAsk(lpInst.symbol);
+  if (rep.longCallAsk <= 0) { rep.bybitBlockedAt = `Long call at kMid=${kMid} has no ask price`; return rep; }
+  if (rep.longPutAsk  <= 0) { rep.bybitBlockedAt = `Long put at kMid=${kMid} has no ask price`; return rep; }
+
+  const outerPutPool = puts.filter(p => p.strike < kMid && getBid(p.symbol) > 0).sort((a, b) => a.strike - b.strike);
+  const outerCallsAbove = calls.filter(c => c.strike > kMid && getBid(c.symbol) > 0).sort((a, b) => a.strike - b.strike);
+  rep.outerPutPoolSize  = outerPutPool.length;
+  rep.outerCallPoolSize = outerCallsAbove.length;
+
+  if (outerPutPool.length === 0)    { rep.bybitBlockedAt = 'No puts below kMid with a non-zero bid'; return rep; }
+  if (outerCallsAbove.length === 0) { rep.bybitBlockedAt = 'No calls above kMid with a non-zero bid'; return rep; }
+
+  let opInst: (typeof puts)[0] | null = null;
+  let ocInst: (typeof calls)[0] | null = null;
+  let shortPutBid = 0, shortCallBid = 0;
+  for (const candidate of outerPutPool) {
+    const opBid = getBid(candidate.symbol);
+    if (opBid <= 0) continue;
+    const ocTarget = 2 * spotPrice - candidate.strike;
+    const oc = outerCallsAbove.reduce((best, c) =>
+      Math.abs(c.strike - ocTarget) < Math.abs(best.strike - ocTarget) ? c : best, outerCallsAbove[0]);
+    const ocBid = getBid(oc.symbol);
+    if (ocBid <= 0) continue;
+    opInst = candidate; ocInst = oc;
+    shortPutBid = opBid; shortCallBid = ocBid;
+    rep.outerPutStrike  = candidate.strike;
+    rep.outerCallTarget = ocTarget;
+    rep.outerCallStrike = oc.strike;
+    rep.shortPutBid  = opBid;
+    rep.shortCallBid = ocBid;
+    break;
+  }
+  if (!opInst || !ocInst) { rep.bybitBlockedAt = 'No valid outer put+call combo (symmetric call has no bid)'; return rep; }
+
+  const ocStrike = ocInst.strike;
+  const opStrike = opInst.strike;
+  const iv_lc = bybitChain.tickers.get(lcInst.symbol)?.markIv ?? 0.8;
+  const iv_lp = bybitChain.tickers.get(lpInst.symbol)?.markIv ?? 0.8;
+  const iv_sc = bybitChain.tickers.get(ocInst.symbol)?.markIv ?? 0.8;
+  const iv_sp = bybitChain.tickers.get(opInst.symbol)?.markIv ?? 0.8;
+
+  const fee_lc = bybitTradingFee(spotPrice, rep.longCallAsk,  bybitQty);
+  const fee_lp = bybitTradingFee(spotPrice, rep.longPutAsk,   bybitQty);
+  const fee_sc = bybitTradingFee(spotPrice, shortCallBid, bybitQty);
+  const fee_sp = bybitTradingFee(spotPrice, shortPutBid,  bybitQty);
+  const netDebit =
+    bybitQty * rep.longCallAsk + fee_lc
+    + bybitQty * rep.longPutAsk  + fee_lp
+    - bybitQty * shortCallBid + fee_sc
+    - bybitQty * shortPutBid  + fee_sp;
+  rep.optionsNetDebit = netDebit;
+  if (netDebit <= 0) { rep.bybitBlockedAt = `Options net debit ≤ 0 (${netDebit.toFixed(4)}): short strangle credit exceeds straddle cost`; return rep; }
+
+  const optsNow = (S: number) =>
+    bybitQty * (bsCallPrice(S, kMid, iv_lc, tauBybit) - rep.longCallAsk) - fee_lc
+    + bybitQty * (bsPutPrice(S, kMid, iv_lp, tauBybit) - rep.longPutAsk)  - fee_lp
+    + bybitQty * (shortCallBid - bsCallPrice(S, ocStrike, iv_sc, tauBybit)) - fee_sc
+    + bybitQty * (shortPutBid  - bsPutPrice(S,  opStrike, iv_sp, tauBybit)) - fee_sp;
+
+  const upperPoly = polyMarkets.filter(m => m.strikePrice > spotPrice);
+  const lowerPoly = polyMarkets.filter(m => m.strikePrice < spotPrice);
+  rep.polyUpperCount = upperPoly.length;
+  rep.polyLowerCount = lowerPoly.length;
+
+  if (upperPoly.length === 0 || lowerPoly.length === 0) {
+    rep.bybitBlockedAt = `Not enough poly strikes: ${upperPoly.length} above spot, ${lowerPoly.length} below spot`;
+    return rep;
+  }
+
+  // Count failure reasons per pair
+  const failCounts: Record<string, { count: number; examples: string[] }> = {};
+  const addFail = (reason: string, label: string) => {
+    if (!failCounts[reason]) failCounts[reason] = { count: 0, examples: [] };
+    failCounts[reason].count++;
+    if (failCounts[reason].examples.length < 3) failCounts[reason].examples.push(label);
+  };
+
+  let totalChecked = 0;
+  let passed = 0;
+
+  for (const polyUpper of upperPoly) {
+    for (const polyLower of lowerPoly) {
+      totalChecked++;
+      const K_upper = polyUpper.strikePrice;
+      const K_lower = polyLower.strikePrice;
+      const pairLabel = `↑${K_upper.toLocaleString()} / ↓${K_lower.toLocaleString()}`;
+
+      const D_upper = K_upper - spotPrice;
+      const D_lower = spotPrice - K_lower;
+      if (D_upper < spotPrice * MIN_BARRIER_DIST_PCT) { addFail('Upper strike < 2% from spot', pairLabel); continue; }
+      if (D_lower < spotPrice * MIN_BARRIER_DIST_PCT) { addFail('Lower strike < 2% from spot', pairLabel); continue; }
+      const symRatio = Math.max(D_upper, D_lower) / Math.min(D_upper, D_lower);
+      if (symRatio > SYMMETRY_RATIO_MAX) { addFail(`Asymmetric pair (ratio ${symRatio.toFixed(2)} > ${SYMMETRY_RATIO_MAX})`, pairLabel); continue; }
+
+      const tauPolyUpper = Math.max((polyUpper.endDate - nowSec) / YEAR_SEC, 0);
+      const tauPolyLower = Math.max((polyLower.endDate - nowSec) / YEAR_SEC, 0);
+      if (tauPolyUpper <= 0 || tauPolyLower <= 0) { addFail('Poly market already expired', pairLabel); continue; }
+
+      const tauPolyNow = Math.min(tauPolyUpper, tauPolyLower);
+      const tauPolyDays = tauPolyNow * 365.25;
+      const tauBybitDays = tauBybit * 365.25;
+      if (tauPolyNow < tauBybit * 0.9) {
+        addFail(
+          `Poly TTX (${tauPolyDays.toFixed(1)}d) < Bybit TTX (${tauBybitDays.toFixed(1)}d) × 0.9`,
+          pairLabel,
+        );
+        continue;
+      }
+
+      const yesBidUpper = (polyUpper.bestBid != null && Number(polyUpper.bestBid) > 0)
+        ? Number(polyUpper.bestBid) : polyUpper.currentPrice;
+      const noAskUpper = 1 - yesBidUpper;
+      if (noAskUpper < 0.01 || noAskUpper > 0.9999) { addFail(`Upper NO price out of range (${noAskUpper.toFixed(4)})`, pairLabel); continue; }
+
+      const yesBidLower = (polyLower.bestBid != null && Number(polyLower.bestBid) > 0)
+        ? Number(polyLower.bestBid) : polyLower.currentPrice;
+      const noAskLower = 1 - yesBidLower;
+      if (noAskLower < 0.01 || noAskLower > 0.9999) { addFail(`Lower NO price out of range (${noAskLower.toFixed(4)})`, pairLabel); continue; }
+
+      const hPolyNow = autoH(tauPolyNow);
+      const polyUpperIv = solveImpliedVol(spotPrice, K_upper, tauPolyUpper, polyUpper.currentPrice, 'hit', true, hPolyNow);
+      const polyLowerIv = solveImpliedVol(spotPrice, K_lower, tauPolyLower, polyLower.currentPrice, 'hit', false, hPolyNow);
+      if (!polyUpperIv || polyUpperIv <= 0 || !polyLowerIv || polyLowerIv <= 0) { addFail('IV calibration failed', pairLabel); continue; }
+
+      const polyNowAtUpper = (1 - priceHit(spotPrice, K_upper, polyUpperIv, tauPolyNow, true, hPolyNow) - noAskUpper)
+        + (1 - priceHit(spotPrice, K_lower, polyLowerIv, tauPolyNow, false, hPolyNow) - noAskLower);
+      const polyNowAtLower = polyNowAtUpper; // same formula evaluated at spot; recompute properly:
+      const avgPolyNow =
+        ((1 - priceHit(K_upper, K_upper, polyUpperIv, tauPolyNow, true, hPolyNow) - noAskUpper)
+         + (1 - priceHit(K_upper, K_lower, polyLowerIv, tauPolyNow, false, hPolyNow) - noAskLower)
+         + (1 - priceHit(K_lower, K_upper, polyUpperIv, tauPolyNow, true, hPolyNow) - noAskUpper)
+         + (1 - priceHit(K_lower, K_lower, polyLowerIv, tauPolyNow, false, hPolyNow) - noAskLower)) / 4;
+      void polyNowAtUpper; void polyNowAtLower;
+
+      const avgOptsNow = (optsNow(K_upper) + optsNow(K_lower)) / 2;
+      const noAskSum = noAskUpper + noAskLower;
+      const T = targetLossFrac;
+      const denom = avgPolyNow + T * noAskSum;
+      if (denom <= 0) { addFail(`Solve denom ≤ 0 (avgPolyNow=${avgPolyNow.toFixed(4)})`, pairLabel); continue; }
+
+      const polyQty = (-avgOptsNow - T * netDebit) / denom;
+      if (!isFinite(polyQty) || polyQty < 0.1 || polyQty > 2000) {
+        addFail(`polyQty out of range (${isFinite(polyQty) ? polyQty.toFixed(2) : 'Inf'})`, pairLabel);
+        continue;
+      }
+
+      const totalCost = netDebit + polyQty * noAskSum;
+      if (totalCost <= 0) { addFail(`totalEntryCost ≤ 0 (${totalCost.toFixed(4)})`, pairLabel); continue; }
+
+      passed++;
+    }
+  }
+
+  rep.totalPairsChecked = totalChecked;
+  rep.passedCount = passed;
+  rep.pairFailures = Object.entries(failCounts)
+    .map(([reason, { count, examples }]) => ({ reason, count, examples }))
+    .sort((a, b) => b.count - a.count);
+
+  return rep;
 }
