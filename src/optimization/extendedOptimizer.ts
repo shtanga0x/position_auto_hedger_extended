@@ -217,7 +217,10 @@ export function runExtendedOptimization(
       const T = targetLossFrac;
       const noAskSum = noAskUpper + noAskLower;
       const denom = avgPolyNowAtHalf + T * noAskSum;
-      if (denom <= 0) continue;
+      // denom can be negative when options are profitable at ½-distance — both
+      // numerator and denominator are negative, giving a valid positive polyQty.
+      // Only skip when denom is exactly zero (division by zero).
+      if (denom === 0) continue;
 
       const polyQty = (-avgOptsNowAtHalf - T * optionsNetDebit) / denom;
       if (!isFinite(polyQty) || polyQty < 0.1 || polyQty > 2000) continue;
@@ -459,13 +462,7 @@ export function diagnoseExtendedOptimization(
       const noAskSum = noAskUpper + noAskLower;
       const T = targetLossFrac;
       const denom = avgPolyNow + T * noAskSum;
-      if (denom <= 0) {
-        addFail(
-          `Solve denom ≤ 0 (avgPolyNow=${avgPolyNow.toFixed(4)}, T×noAskSum=${(T * noAskSum).toFixed(4)}): poly NO too deep in-the-money at ½-distance`,
-          pairLabel,
-        );
-        continue;
-      }
+      if (denom === 0) { addFail('Solve denom exactly zero (degenerate)', pairLabel); continue; }
 
       const polyQty = (-avgOptsNow - T * netDebit) / denom;
       if (!isFinite(polyQty) || polyQty < 0.1 || polyQty > 2000) {
