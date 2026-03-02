@@ -328,7 +328,8 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
   };
   const handleViz = useCallback((m: ExtendedMatch) => setVizMatch(prev => prev === m ? null : m), []);
   const hasInputs = polyMarkets.length > 0 && !!bybitChain && spotPrice > 0;
-  const isLoading = hasInputs && optResults.length === 0;
+  // useMemo is synchronous — optimizer finishes instantly; never show a spinner
+  const isLoading = false;
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', p: 2, gap: 1.5 }}>
@@ -364,10 +365,19 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 2, color: 'text.secondary' }}>
           <CircularProgress size={24} /><Typography variant="body2">Running optimization...</Typography>
         </Box>
-      ) : optResults.length === 0 ? (
+      ) : !hasInputs ? (
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+          <Typography variant="body2" color="text.secondary">Waiting for market data…</Typography>
+        </Box>
+      ) : optResults.length === 0 ? (
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            No results. Try different barrier strikes or a Bybit expiry closer to the poly event.
+            No valid combinations found for this event + expiry.
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ opacity: 0.6, textAlign: 'center', maxWidth: 420 }}>
+            Possible reasons: no Poly strike pairs within 30% symmetry of spot; Bybit expiry
+            already passed; no Bybit strikes near the symmetric target; options P&L couldn't
+            be made flat with available strikes. Try a different Bybit expiry.
           </Typography>
         </Box>
       ) : (
