@@ -221,7 +221,7 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
   const isDark = muiTheme.palette.mode === 'dark';
   const [vizMatch, setVizMatch] = useState<ExtendedMatch | null>(null);
   const [bybitQtyInput, setBybitQtyInput] = useState('0.01');
-  const [targetLossInput, setTargetLossInput] = useState('5');
+  const [targetLossInput, setTargetLossInput] = useState('2');
   const snapshotRef = useRef<HTMLDivElement>(null);
 
   const fmtTimeUTC1 = (ms: number) => {
@@ -370,7 +370,7 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
             </Box>
             {/* Target loss at barriers */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '16px', px: 1, py: '3px', bgcolor: 'rgba(239, 68, 68, 0.06)' }}>
-              <Typography variant="caption" sx={{ color: '#EF4444', fontSize: '0.72rem', userSelect: 'none' }}>Loss @ barriers:</Typography>
+              <Typography variant="caption" sx={{ color: '#EF4444', fontSize: '0.72rem', userSelect: 'none' }}>Loss @ ½ dist:</Typography>
               <Box component="input" type="number" value={targetLossInput}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setTargetLossInput(e.target.value); setVizMatch(null); }}
                 step="0.5" min="0.1" max="50"

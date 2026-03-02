@@ -61,7 +61,7 @@ export function runExtendedOptimization(
   nowSec: number,
   bybitChain: BybitOptionChain,
   bybitQty: number = 0.01,
-  targetLossFrac: number = 0.05,   // 0.05 = 5% loss at barriers
+  targetLossFrac: number = 0.02,   // 0.02 = 2% loss at ½-distance points
 ): ExtendedMatch[] {
   const calls = bybitChain.instruments.filter(i => i.optionsType === 'Call');
   const puts  = bybitChain.instruments.filter(i => i.optionsType === 'Put');
@@ -236,32 +236,43 @@ export function runExtendedOptimization(
         return (1 - upYes - noAskUpper) + (1 - loYes - noAskLower);
       };
 
+      // Half-distance evaluation points for the solve
+      const halfUpper = spotPrice + (K_upper - spotPrice) / 2;
+      const halfLower = spotPrice - (spotPrice - K_lower) / 2;
+
+      const polyNowAtHalfUpper = polyUnitNow(halfUpper);
+      const polyNowAtHalfLower = polyUnitNow(halfLower);
+      const avgPolyNowAtHalf   = (polyNowAtHalfUpper + polyNowAtHalfLower) / 2;
+
+      // Full-barrier points for output metrics only
       const polyNowAtUpper  = polyUnitNow(K_upper);
       const polyNowAtLower  = polyUnitNow(K_lower);
-      const avgPolyNowAtStrikes = (polyNowAtUpper + polyNowAtLower) / 2;
 
       const polyExpiryAtUpper = polyUnitExpiry(K_upper);
       const polyExpiryAtLower = polyUnitExpiry(K_lower);
 
-      // ── Options P&L at barrier strikes ───────────────────────────────────
+      // ── Options P&L ───────────────────────────────────────────────────────
+      const optsNowAtHalfUpper = optsNow(halfUpper);
+      const optsNowAtHalfLower = optsNow(halfLower);
+      const avgOptsNowAtHalf   = (optsNowAtHalfUpper + optsNowAtHalfLower) / 2;
+
       const optsNowAtUpper    = optsNow(K_upper);
       const optsNowAtLower    = optsNow(K_lower);
       const optsExpiryAtUpper = optsExpiry(K_upper);
       const optsExpiryAtLower = optsExpiry(K_lower);
 
-      const avgOptsNowAtStrikes = (optsNowAtUpper + optsNowAtLower) / 2;
       const avgOptsExpiryAtStrikes = (optsExpiryAtUpper + optsExpiryAtLower) / 2;
 
-      // ── Analytically solve polyQty for NOW target (-targetLoss%) ─────────
-      // We want: avgOpts + polyQty × avgPolyUnit = −T × (optionsNetDebit + polyQty × noAskSum)
-      // → polyQty = (−avgOpts − T × optionsNetDebit) / (avgPolyUnit + T × noAskSum)
+      // ── Analytically solve polyQty: NOW P&L at ½-distance points = −T × cost ──
+      // avgOpts_half + polyQty × avgPolyUnit_half = −T × (optionsNetDebit + polyQty × noAskSum)
+      // → polyQty = (−avgOpts_half − T × optionsNetDebit) / (avgPolyUnit_half + T × noAskSum)
       const T = targetLossFrac;
       const noAskSum = noAskUpper + noAskLower;
 
-      const denom = avgPolyNowAtStrikes + T * noAskSum;
+      const denom = avgPolyNowAtHalf + T * noAskSum;
       if (denom <= 0) continue;
 
-      const polyQty = (-avgOptsNowAtStrikes - T * optionsNetDebit) / denom;
+      const polyQty = (-avgOptsNowAtHalf - T * optionsNetDebit) / denom;
       if (!isFinite(polyQty) || polyQty < 0.1 || polyQty > 2000) continue;
 
       // ── Total entry cost and final metrics ───────────────────────────────
@@ -338,7 +349,7 @@ export function diagnoseExtendedOptimization(
   nowSec: number,
   bybitChain: BybitOptionChain,
   bybitQty: number = 0.01,
-  targetLossFrac: number = 0.05,
+  targetLossFrac: number = 0.02,
 ): DiagnosticsReport {
   const rep: DiagnosticsReport = {
     bybitBlockedAt: null,
@@ -506,17 +517,15 @@ export function diagnoseExtendedOptimization(
       const polyLowerIv = solveImpliedVol(spotPrice, K_lower, tauPolyLower, polyLower.currentPrice, 'hit', false, hPolyNow);
       if (!polyUpperIv || polyUpperIv <= 0 || !polyLowerIv || polyLowerIv <= 0) { addFail('IV calibration failed', pairLabel); continue; }
 
-      const polyNowAtUpper = (1 - priceHit(spotPrice, K_upper, polyUpperIv, tauPolyNow, true, hPolyNow) - noAskUpper)
-        + (1 - priceHit(spotPrice, K_lower, polyLowerIv, tauPolyNow, false, hPolyNow) - noAskLower);
-      const polyNowAtLower = polyNowAtUpper; // same formula evaluated at spot; recompute properly:
-      const avgPolyNow =
-        ((1 - priceHit(K_upper, K_upper, polyUpperIv, tauPolyNow, true, hPolyNow) - noAskUpper)
-         + (1 - priceHit(K_upper, K_lower, polyLowerIv, tauPolyNow, false, hPolyNow) - noAskLower)
-         + (1 - priceHit(K_lower, K_upper, polyUpperIv, tauPolyNow, true, hPolyNow) - noAskUpper)
-         + (1 - priceHit(K_lower, K_lower, polyLowerIv, tauPolyNow, false, hPolyNow) - noAskLower)) / 4;
-      void polyNowAtUpper; void polyNowAtLower;
+      // Solve at ½-distance points (same as main optimizer)
+      const halfUpper = spotPrice + (K_upper - spotPrice) / 2;
+      const halfLower = spotPrice - (spotPrice - K_lower) / 2;
+      const polyUnitNow = (S: number) =>
+        (1 - priceHit(S, K_upper, polyUpperIv, tauPolyNow, true,  hPolyNow) - noAskUpper)
+        + (1 - priceHit(S, K_lower, polyLowerIv, tauPolyNow, false, hPolyNow) - noAskLower);
+      const avgPolyNow = (polyUnitNow(halfUpper) + polyUnitNow(halfLower)) / 2;
 
-      const avgOptsNow = (optsNow(K_upper) + optsNow(K_lower)) / 2;
+      const avgOptsNow = (optsNow(halfUpper) + optsNow(halfLower)) / 2;
       const noAskSum = noAskUpper + noAskLower;
       const T = targetLossFrac;
       const denom = avgPolyNow + T * noAskSum;
