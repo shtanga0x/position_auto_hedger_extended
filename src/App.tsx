@@ -20,7 +20,10 @@ function App() {
   const [polyEvent, setPolyEvent] = useState<PolymarketEvent | null>(null);
   const [polyMarkets, setPolyMarkets] = useState<ParsedMarket[]>([]);
   const [crypto, setCrypto] = useState<CryptoOption | null>(null);
-  const [optionType, setOptionType] = useState<OptionType>('above');
+
+  // Selected strategy markets (upper HIT NO + lower HIT NO)
+  const [upperMarket, setUpperMarket] = useState<ParsedMarket | null>(null);
+  const [lowerMarket, setLowerMarket] = useState<ParsedMarket | null>(null);
 
   // Bybit state
   const [bybitChain, setBybitChain] = useState<BybitChainType | null>(null);
@@ -30,13 +33,19 @@ function App() {
   const [polyUrl, setPolyUrl] = useState('');
 
   const handlePolyEventLoaded = useCallback(
-    (event: PolymarketEvent, markets: ParsedMarket[], detectedCrypto: CryptoOption | null, detectedType: OptionType, spot: number, url: string) => {
+    (event: PolymarketEvent, markets: ParsedMarket[], detectedCrypto: CryptoOption | null, _detectedType: OptionType, spot: number, url: string) => {
       setPolyEvent(event);
       setPolyMarkets(markets);
       setCrypto(detectedCrypto);
-      setOptionType(detectedType);
       setSpotPrice(prev => prev || spot);
       setPolyUrl(url);
+      // Auto-select closest-above upper and closest-below lower
+      const currentSpot = spot;
+      const sortedMarkets = [...markets].sort((a, b) => a.strikePrice - b.strikePrice);
+      const lowerCandidates = sortedMarkets.filter(m => m.strikePrice < currentSpot);
+      const upperCandidates = sortedMarkets.filter(m => m.strikePrice > currentSpot);
+      setLowerMarket(lowerCandidates.length > 0 ? lowerCandidates[lowerCandidates.length - 1] : null);
+      setUpperMarket(upperCandidates.length > 0 ? upperCandidates[0] : null);
     },
     []
   );
@@ -67,7 +76,17 @@ function App() {
       }
       if (polyEvent) {
         const freshEvent = await fetchEventBySlug(polyEvent.slug);
-        setPolyMarkets(parseMarkets(freshEvent.markets));
+        const freshMarkets = parseMarkets(freshEvent.markets);
+        setPolyMarkets(freshMarkets);
+        // Re-sync selected markets to fresh data
+        setUpperMarket(prev => {
+          if (!prev) return null;
+          return freshMarkets.find(m => m.id === prev.id) ?? prev;
+        });
+        setLowerMarket(prev => {
+          if (!prev) return null;
+          return freshMarkets.find(m => m.id === prev.id) ?? prev;
+        });
       }
       if (bybitChain) {
         clearBybitCache();
@@ -121,10 +140,16 @@ function App() {
         {screen === 'setup' && (
           <SetupScreen
             polyEvent={polyEvent}
+            polyMarkets={polyMarkets}
+            spotPrice={spotPrice}
+            upperMarket={upperMarket}
+            lowerMarket={lowerMarket}
             bybitChain={bybitChain}
             onPolyEventLoaded={handlePolyEventLoaded}
             onBybitChainSelected={handleBybitChainSelected}
             onBybitSpotPriceLoaded={handleBybitSpotPriceLoaded}
+            onUpperMarketChange={setUpperMarket}
+            onLowerMarketChange={setLowerMarket}
             onContinue={handleContinue}
           />
         )}
@@ -133,7 +158,8 @@ function App() {
             polyEvent={polyEvent}
             polyMarkets={polyMarkets}
             crypto={crypto}
-            optionType={optionType}
+            upperMarket={upperMarket}
+            lowerMarket={lowerMarket}
             spotPrice={spotPrice}
             bybitChain={bybitChain}
             polyUrl={polyUrl}

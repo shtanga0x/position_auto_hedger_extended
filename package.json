@@ -1,8 +1,8 @@
 {
-  "name": "position-auto-hedger",
+  "name": "position-auto-hedger-extended",
   "private": true,
-  "version": "5.3.2",
-  "description": "Polymarket + Bybit options optimizer with 3-leg spread — poly NO + long option + short option at poly strike",
+  "version": "1.0.0",
+  "description": "6-leg symmetric BTC position: 2× Polymarket HIT NO + long straddle (K_mid call+put) + short strangle (K_outer call+put)",
   "type": "module",
   "scripts": {
     "dev": "vite",

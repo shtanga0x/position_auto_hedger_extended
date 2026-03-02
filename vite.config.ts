@@ -8,7 +8,7 @@ const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 export default defineConfig({
   plugins: [react()],
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
-  base: process.env.GITHUB_ACTIONS ? '/position_auto_hedger/' : '/',
+  base: process.env.GITHUB_ACTIONS ? '/position_auto_hedger_extended/' : '/',
   server: {
     proxy: {
       '/api/gamma': {

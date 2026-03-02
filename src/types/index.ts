@@ -146,3 +146,44 @@ export interface StrikeOptResult {
   best10: OptMatchResult | null;  // Best match ranked by avgPnl10
   best20: OptMatchResult | null;  // Best match ranked by avgPnl20
 }
+
+// --- Extended 6-leg optimization types ---
+
+export interface ExtendedMatch {
+  // Strike structure
+  longStrike: number;           // K_mid — long call+put here (straddle)
+  shortCallStrike: number;      // K_outer_call — sell call here
+  shortPutStrike: number;       // K_outer_put — sell put here
+
+  // Instruments
+  longCallInstrument: BybitInstrument;
+  longPutInstrument: BybitInstrument;
+  shortCallInstrument: BybitInstrument;
+  shortPutInstrument: BybitInstrument;
+  polyUpperMarket: ParsedMarket;
+  polyLowerMarket: ParsedMarket;
+
+  // Quantities
+  longQty: number;              // bybitQty (base unit)
+  shortCallQty: number;
+  shortPutQty: number;
+  polyUpperQty: number;
+  polyLowerQty: number;
+
+  // Entry prices (per unit)
+  longCallEntry: number;        // ask
+  longPutEntry: number;         // ask
+  shortCallEntry: number;       // bid
+  shortPutEntry: number;        // bid
+  polyUpperNoEntry: number;     // 1 - yesBid
+  polyLowerNoEntry: number;     // 1 - yesBid
+  polyUpperIv: number;          // calibrated IV for upper barrier
+  polyLowerIv: number;          // calibrated IV for lower barrier
+
+  // Scoring (evaluated at options expiry, poly still has tauPolyRem remaining)
+  tauPolyRem: number;           // poly remaining time at options expiry (years)
+  avgPnl3pct: number;           // avg P&L in ±1–3% band around spot (absolute $)
+  avgPnl7pct: number;           // avg P&L in ±1–7% band
+  maxLoss: number;              // worst P&L in full ±25% grid (absolute $, negative)
+  totalEntryCost: number;       // gross cost ($) — denominator for % P&L display
+}
