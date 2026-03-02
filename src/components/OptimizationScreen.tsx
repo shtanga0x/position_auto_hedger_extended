@@ -402,16 +402,13 @@ export function OptimizationScreen({ polyEvent, polyMarkets, crypto, spotPrice, 
                 BYBIT STRUCTURE {diagnostics.bybitBlockedAt ? '✗ BLOCKED' : '✓ OK'}
               </Typography>
               <Box component="pre" sx={{ m: 0, fontSize: '0.72rem', color: diagnostics.bybitBlockedAt ? '#EF4444' : 'text.secondary', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-{`  Bybit TTX:       ${diagnostics.tauBybitDays.toFixed(1)} days
-  Dual strikes:    ${diagnostics.dualStrikesCount}
-  kMid:            ${diagnostics.kMid != null ? `$${diagnostics.kMid.toLocaleString()}` : '—'}
-  Long call ask:   ${diagnostics.longCallAsk > 0 ? `$${diagnostics.longCallAsk.toFixed(2)}` : '—'}
-  Long put ask:    ${diagnostics.longPutAsk > 0  ? `$${diagnostics.longPutAsk.toFixed(2)}`  : '—'}
-  Outer put pool:  ${diagnostics.outerPutPoolSize} candidates with bid > 0
-  Outer call pool: ${diagnostics.outerCallPoolSize} candidates with bid > 0
-  Outer put:       ${diagnostics.outerPutStrike != null ? `$${diagnostics.outerPutStrike.toLocaleString()}  bid $${diagnostics.shortPutBid.toFixed(2)}` : '—'}
-  Outer call tgt:  ${diagnostics.outerCallTarget != null ? `$${diagnostics.outerCallTarget.toLocaleString()} → nearest $${diagnostics.outerCallStrike?.toLocaleString()}  bid $${diagnostics.shortCallBid.toFixed(2)}` : '—'}
-  Options debit:   ${diagnostics.optionsNetDebit != null ? `$${diagnostics.optionsNetDebit.toFixed(4)}` : '—'}${diagnostics.bybitBlockedAt ? `\n\n  ✗ ${diagnostics.bybitBlockedAt}` : ''}`}
+{`  Bybit TTX:           ${diagnostics.tauBybitDays.toFixed(1)} days
+  Dual strikes:        ${diagnostics.dualStrikesCount}
+  kMid (long straddle):${diagnostics.kMid != null ? ` $${diagnostics.kMid.toLocaleString()}` : ' —'}
+  Long call ask:       ${diagnostics.longCallAsk > 0 ? `$${diagnostics.longCallAsk.toFixed(2)}` : '—'}
+  Long put ask:        ${diagnostics.longPutAsk > 0  ? `$${diagnostics.longPutAsk.toFixed(2)}`  : '—'}
+  Calls above kMid:    ${diagnostics.callPoolAboveKMid} with bid > 0  (outer call chosen per poly pair)
+  Puts below kMid:     ${diagnostics.putPoolBelowKMid} with bid > 0  (outer put chosen per poly pair)${diagnostics.bybitBlockedAt ? `\n\n  ✗ ${diagnostics.bybitBlockedAt}` : ''}`}
               </Box>
 
               {/* Poly pairs */}
