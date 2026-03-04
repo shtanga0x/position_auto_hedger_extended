@@ -125,7 +125,7 @@ export function detectOptionType(event: PolymarketEvent): OptionType {
 }
 
 export function extractSlugFromUrl(url: string): string | null {
-  const regex = /^https?:\/\/(?:www\.)?polymarket\.com\/event\/([a-zA-Z0-9-]+)\/?.*$/;
+  const regex = /^https?:\/\/(?:www\.)?polymarket\.com\/(?:[a-z]{2,3}\/)?event\/([a-zA-Z0-9-]+)\/?.*$/;
   const match = url.match(regex);
   return match ? match[1] : null;
 }
